@@ -1,0 +1,182 @@
+# ==============================================================================
+# AutoKT - Docker Compose Configuration (Docker Compose V2 Spec)
+#
+# SECURITY NOTICE:
+# Credentials and secret keys in this file are defaults for local development only.
+# For production deployments, override them using a secure .env file or environment
+# variables:
+#   - POSTGRES_PASSWORD
+#   - NEO4J_PASSWORD
+#   - JWT_SECRET
+#   - DATABASE_URL
+# Never expose production database ports or default passwords to public networks.
+# ==============================================================================
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: autokt-backend
+    restart: unless-stopped
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    ports:
+      - "8000:8000"
+    volumes:
+      # Bind mount source code into container for dev hot-reloading
+      - ./backend:/app
+    env_file:
+      # Optional: if .env is missing, ${VAR:-default} fallbacks below are used
+      - path: .env
+        required: false
+    environment:
+      # LLM Provider Configuration ("anthropic" | "azure_openai" | "azure_foundry" | "gemini")
+      LLM_PROVIDER: ${LLM_PROVIDER:-none}
+      LLM_API_KEY: ${LLM_API_KEY:-dummy_key}
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_MODEL: ${LLM_MODEL:-gpt-5-mini}
+
+      # Azure OpenAI Configuration (Only used if LLM_PROVIDER=azure_openai)
+      AZURE_OPENAI_ENDPOINT: ${AZURE_OPENAI_ENDPOINT:-}
+      AZURE_OPENAI_DEPLOYMENT: ${AZURE_OPENAI_DEPLOYMENT:-}
+      AZURE_OPENAI_API_VERSION: ${AZURE_OPENAI_API_VERSION:-}
+
+      # Database Connections
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: ${NEO4J_USER:-neo4j}
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-password123}
+      CHROMA_HOST: chroma
+      CHROMA_PORT: 8000
+      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/autokt}
+
+      # JWT Secret - Production secrets MUST be overridden via .env or environment variables
+      JWT_SECRET: ${JWT_SECRET:-dev_only_secret_change_me}
+    depends_on:
+      neo4j:
+        condition: service_healthy
+      chroma:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      # Python urllib healthcheck - works on python:3.x-slim images without curl
+      test:
+        - "CMD"
+        - "python"
+        - "-c"
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - autokt
+
+  postgres:
+    image: postgres:16
+    container_name: autokt-postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-autokt}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - autokt
+
+  neo4j:
+    image: neo4j:5-community
+    container_name: autokt-neo4j
+    restart: unless-stopped
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # NEO4J_AUTH format is user/password
+      NEO4J_AUTH: ${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-password123}
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+    healthcheck:
+      # cypher-shell is included in the official neo4j:5-community image.
+      # The container env already has NEO4J_USER / NEO4J_PASSWORD set, so plain $VAR works here.
+      test:
+        - "CMD-SHELL"
+        - "cypher-shell -u $${NEO4J_USER:-neo4j} -p $${NEO4J_PASSWORD:-password123} 'RETURN 1;' || exit 1"
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - autokt
+
+  chroma:
+    image: chromadb/chroma:latest
+    container_name: autokt-chroma
+    restart: unless-stopped
+    ports:
+      - "8001:8000"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # IS_PERSISTENT=TRUE enables persistent storage in ChromaDB 0.5.x
+      IS_PERSISTENT: "TRUE"
+      # CHROMA_SERVER_PATH tells ChromaDB where to persist data inside the container
+      CHROMA_SERVER_PATH: /chroma/chroma
+    volumes:
+      # Named volume mounted at same path as CHROMA_SERVER_PATH
+      - chroma_data:/chroma/chroma
+    healthcheck:
+      test: ["CMD-SHELL", "/usr/bin/bash -c 'exec 3<>/dev/tcp/localhost/8000' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - autokt
+
+networks:
+  autokt:
+    driver: bridge
+
+volumes:
+  neo4j_data:
+  neo4j_logs:
+  chroma_data:
+  postgres_data:

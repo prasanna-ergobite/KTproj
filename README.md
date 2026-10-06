@@ -81,3 +81,8 @@ npm run dev
 ```
 
 Frontend will be available at http://localhost:3000.
+
+The frontend connects to FastAPI using `VITE_API_BASE_URL` (defaults to
+`http://localhost:8000`). Live workspace IDs and the most recent ingestion
+summary are retained in browser local storage so the UI can recover its active
+repository despite the backend not yet exposing repository/document list APIs.

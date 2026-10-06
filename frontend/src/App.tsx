@@ -9,8 +9,8 @@ import {
 } from 'lucide-react';
 import {
   API_BASE_URL, BusinessMappingResult, HealthModule, KTQuestionsResult, OnboardingResult,
-  RepoHealthResponse, RepoIngestionResult, SearchResultItem, checkBackend, getModuleHealth,
-  getRepoHealth, ingestRepository, pollTask, searchKnowledge, startBusinessDocumentMapping,
+  RepoHealthResponse, RepoIngestionResult, RepositorySummary, SearchResultItem, checkBackend, getModuleHealth,
+  getRepoHealth, ingestRepository, listRepositories, pollTask, searchKnowledge, startBusinessDocumentMapping,
   startKTQuestions, startOnboardingPack, uploadBusinessDocs, uploadTechnicalDocs,
 } from './api';
 
@@ -55,6 +55,8 @@ function App() {
   const [moduleTab, setModuleTab] = useState<ModuleTab>('health');
   const [toast, setToast] = useState('');
   const [backendOnline, setBackendOnline] = useState<boolean | null>(null);
+  const [repositories, setRepositories] = useState<RepositorySummary[]>([]);
+  const [loadingRepos, setLoadingRepos] = useState(false);
 
   useEffect(() => {
     if (!toast) return;
@@ -62,8 +64,58 @@ function App() {
     return () => window.clearTimeout(timer);
   }, [toast]);
 
+  const selectRepository = (repo: RepositorySummary) => {
+    const next: WorkspaceContext = {
+      organizationId: repo.organization_id,
+      repositoryId: repo.id,
+      repositoryName: repo.name,
+      selectedModuleId: '',
+      selectedModuleName: '',
+      selectedModulePath: '',
+      businessDocumentId: '',
+      businessDocumentName: '',
+      ingestion: {
+        repository_id: repo.id,
+        repository_url: repo.url,
+        organization_id: repo.organization_id,
+        modules_count: repo.modules_count,
+        files_count: repo.files_count,
+        docs_count: repo.docs_count,
+        authors_count: 0,
+        chunks_count: repo.files_count + repo.docs_count,
+        code_chunks_count: repo.files_count,
+        doc_chunks_count: repo.docs_count,
+      },
+    };
+    setWorkspace(next);
+    setScreen('overview');
+    setToast(`Loaded workspace for ${repo.name}`);
+  };
+
+  const fetchRepositories = async () => {
+    try {
+      setLoadingRepos(true);
+      const res = await listRepositories();
+      setRepositories(res.repositories);
+      return res.repositories;
+    } catch {
+      return [];
+    } finally {
+      setLoadingRepos(false);
+    }
+  };
+
   useEffect(() => {
     checkBackend().then(setBackendOnline);
+    fetchRepositories().then((repos) => {
+      const current = loadWorkspace();
+      if (!current.repositoryId && repos.length > 0) {
+        const candidate = repos.find((r) => !r.id.includes('test_') && !r.id.includes('cleanup_')) || repos[0];
+        if (candidate) {
+          selectRepository(candidate);
+        }
+      }
+    });
   }, []);
 
   useEffect(() => {
@@ -81,9 +133,25 @@ function App() {
     <div className="app-shell">
       <Sidebar active={screen} open={sidebarOpen} workspace={workspace} onNavigate={navigate} onClose={() => setSidebarOpen(false)} />
       <div className="main-shell">
-        <Topbar workspace={workspace} backendOnline={backendOnline} onMenu={() => setSidebarOpen(true)} onSetup={() => navigate('setup')} />
+        <Topbar
+          workspace={workspace}
+          backendOnline={backendOnline}
+          repositories={repositories}
+          onSelectRepo={selectRepository}
+          onMenu={() => setSidebarOpen(true)}
+          onSetup={() => navigate('setup')}
+        />
         <main className="page-stage">
-          {screen === 'setup' && <SetupScreen backendOnline={backendOnline} onComplete={(next) => { setWorkspace(next); setBackendOnline(true); navigate('overview'); }} />}
+          {screen === 'setup' && (
+            <SetupScreen
+              backendOnline={backendOnline}
+              repositories={repositories}
+              loadingRepos={loadingRepos}
+              onSelectRepo={selectRepository}
+              onRefreshRepos={fetchRepositories}
+              onComplete={(next) => { setWorkspace(next); setBackendOnline(true); navigate('overview'); fetchRepositories(); }}
+            />
+          )}
           {screen === 'overview' && <OverviewScreen workspace={workspace} onNavigate={navigate} onModule={(module) => { setWorkspace((current) => ({ ...current, selectedModuleId: module.module_id, selectedModuleName: module.module_name, selectedModulePath: module.module_id.split(':module:')[1] || module.module_name })); setModuleTab('health'); navigate('module'); }} />}
           {screen === 'search' && <SearchScreen workspace={workspace} setToast={setToast} />}
           {screen === 'module' && <ModuleScreen workspace={workspace} activeTab={moduleTab} setTab={setModuleTab} setToast={setToast} />}
@@ -105,16 +173,86 @@ function Sidebar({ active, open, workspace, onNavigate, onClose }: { active: Scr
   </aside></>;
 }
 
-function Topbar({ workspace, backendOnline, onMenu, onSetup }: { workspace: WorkspaceContext; backendOnline: boolean | null; onMenu: () => void; onSetup: () => void }) {
+function Topbar({
+  workspace,
+  backendOnline,
+  repositories,
+  onSelectRepo,
+  onMenu,
+  onSetup,
+}: {
+  workspace: WorkspaceContext;
+  backendOnline: boolean | null;
+  repositories: RepositorySummary[];
+  onSelectRepo: (repo: RepositorySummary) => void;
+  onMenu: () => void;
+  onSetup: () => void;
+}) {
   const label = backendOnline ? 'API connected' : backendOnline === false ? 'API unavailable' : 'Checking API';
-  return <header className="topbar"><button className="menu-button" onClick={onMenu}><Menu size={20} /></button><div className="breadcrumb"><span>{workspace.organizationId || 'No organization'}</span><ChevronRight size={14} /><strong>{workspace.repositoryName || 'No repository'}</strong></div><div className="topbar-actions"><span className={`api-pill ${backendOnline === false ? 'offline' : ''}`} title={API_BASE_URL}><i /> {label}</span><button className="icon-button" title="System activity"><Activity size={18} /></button><button className="primary-button compact" onClick={onSetup}><Plus size={16} />Add source</button></div></header>;
+  return (
+    <header className="topbar">
+      <button className="menu-button" onClick={onMenu}>
+        <Menu size={20} />
+      </button>
+      <div className="breadcrumb">
+        <span>{workspace.organizationId || 'No organization'}</span>
+        <ChevronRight size={14} />
+        <strong>{workspace.repositoryName || 'No repository'}</strong>
+      </div>
+      {repositories.length > 0 && (
+        <div className="repo-selector-pill" title="Switch active repository">
+          <FolderGit2 size={14} />
+          <select
+            value={workspace.repositoryId}
+            onChange={(e) => {
+              const selected = repositories.find((r) => r.id === e.target.value);
+              if (selected) onSelectRepo(selected);
+            }}
+          >
+            <option value="" disabled>Select Repository</option>
+            {repositories.map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.name} ({r.organization_id})
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+      <div className="topbar-actions">
+        <span className={`api-pill ${backendOnline === false ? 'offline' : ''}`} title={API_BASE_URL}>
+          <i /> {label}
+        </span>
+        <button className="icon-button" title="System activity">
+          <Activity size={18} />
+        </button>
+        <button className="primary-button compact" onClick={onSetup}>
+          <Plus size={16} />
+          Add source
+        </button>
+      </div>
+    </header>
+  );
 }
 
 function PageHeader({ eyebrow, title, description, actions }: { eyebrow: string; title: string; description: string; actions?: React.ReactNode }) {
   return <div className="page-header"><div><div className="eyebrow">{eyebrow}</div><h1>{title}</h1><p>{description}</p></div>{actions && <div className="page-actions">{actions}</div>}</div>;
 }
 
-function SetupScreen({ backendOnline, onComplete }: { backendOnline: boolean | null; onComplete: (workspace: WorkspaceContext) => void }) {
+function SetupScreen({
+  backendOnline,
+  repositories,
+  loadingRepos,
+  onSelectRepo,
+  onRefreshRepos,
+  onComplete,
+}: {
+  backendOnline: boolean | null;
+  repositories: RepositorySummary[];
+  loadingRepos: boolean;
+  onSelectRepo: (repo: RepositorySummary) => void;
+  onRefreshRepos: () => void;
+  onComplete: (workspace: WorkspaceContext) => void;
+}) {
   const [ingestState, setIngestState] = useState<IngestState>('idle');
   const [progress, setProgress] = useState(0);
   const [repoUrl, setRepoUrl] = useState('');
@@ -151,6 +289,47 @@ function SetupScreen({ backendOnline, onComplete }: { backendOnline: boolean | n
   return <div className="content-wrap setup-page">
     <PageHeader eyebrow="Project setup" title="Turn a codebase into living knowledge." description="Connect a repository and its context. AutoKT will map the architecture, ownership, documentation, and business intent." />
     {backendOnline === false && <div className="inline-notice error"><Info size={16} /><span>The AutoKT API at {API_BASE_URL} is unavailable. Start the backend before beginning ingestion.</span></div>}
+    
+    {repositories.length > 0 && (
+      <section className="surface existing-repos-card">
+        <div className="existing-repos-head">
+          <div>
+            <div className="eyebrow">Database repositories</div>
+            <h2>Available in knowledge graph ({repositories.length})</h2>
+            <p>These repositories have already been ingested. Click any repository to load its live workspace immediately.</p>
+          </div>
+          <button className="secondary-button" onClick={onRefreshRepos} disabled={loadingRepos}>
+            <RefreshCw size={14} className={loadingRepos ? 'spin' : ''} />
+            Refresh
+          </button>
+        </div>
+        <div className="repo-grid">
+          {repositories.map((repo) => (
+            <div key={repo.id} className="repo-card" onClick={() => onSelectRepo(repo)}>
+              <div className="repo-card-top">
+                <div className="repo-avatar">
+                  <FolderGit2 size={16} />
+                </div>
+                <div>
+                  <strong>{repo.name}</strong>
+                  <small>Org: {repo.organization_id}</small>
+                </div>
+                <button className="primary-button compact" type="button" onClick={(e) => { e.stopPropagation(); onSelectRepo(repo); }}>
+                  Open
+                  <ArrowRight size={13} />
+                </button>
+              </div>
+              <div className="repo-card-stats">
+                <span><Boxes size={12} /> {repo.modules_count} modules</span>
+                <span><FileCode2 size={12} /> {repo.files_count} files</span>
+                <span><BookOpen size={12} /> {repo.docs_count} docs</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+    )}
+
     <div className="setup-grid"><section className="surface setup-card">
       <div className="step-heading"><span>01</span><div><h2>Connect repository</h2><p>Public or authenticated Git repository</p></div><CheckCircle2 size={19} className="success-icon" /></div>
       <label className="field-label">Repository URL</label><div className="input-shell"><Github size={18} /><input value={repoUrl} onChange={(e) => setRepoUrl(e.target.value)} /><Check size={17} className="input-check" /></div>

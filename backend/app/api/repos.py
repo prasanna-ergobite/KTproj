@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.db.postgres_client import get_db
+from app.db.neo4j_client import neo4j_client
 from app.models.db_models import Task
 from app.core.constants import SYSTEM_USER_ID, ensure_system_user
 from app.graphs.repo_ingestion import run_repo_ingestion_task, validate_repo_url, sanitize_url
@@ -36,9 +37,106 @@ class TaskStatusResponse(BaseModel):
     updated_at: datetime
 
 
+class RepositorySummary(BaseModel):
+    id: str = Field(..., description="Unique repository identifier, e.g. repo:simple-rag")
+    name: str = Field(..., description="Repository name")
+    organization_id: str = Field(..., description="Tenant organization identifier")
+    url: str = Field(..., description="Repository source URL or clone path")
+    default_branch: str = Field("main", description="Default branch name")
+    modules_count: int = Field(0, description="Number of modules identified in this repository")
+    files_count: int = Field(0, description="Number of source files ingested")
+    docs_count: int = Field(0, description="Number of documents associated with this repository")
+
+
+class RepositoryListResponse(BaseModel):
+    repositories: list[RepositorySummary]
+    total: int
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
+
+@router.get("", response_model=RepositoryListResponse)
+async def list_repositories(
+    organization_id: str | None = None,
+):
+    """
+    List all ingested repositories from the knowledge graph.
+    Optionally filters by organization_id if provided.
+    """
+    if neo4j_client.driver is None:
+        try:
+            neo4j_client.connect()
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"Neo4j database connection unavailable: {exc}",
+            )
+
+    try:
+        with neo4j_client.driver.session() as session:
+            if organization_id and organization_id.strip():
+                query = """
+                MATCH (r:Repository {organization_id: $organization_id})
+                OPTIONAL MATCH (m:Module)-[:PART_OF]->(r)
+                OPTIONAL MATCH (f:File)-[:PART_OF]->(m)
+                OPTIONAL MATCH (d:Document)-[:DOCUMENTS]->(m)
+                OPTIONAL MATCH (dr:Document)-[:DOCUMENTS]->(r)
+                RETURN r.id AS id, r.name AS name, r.organization_id AS organization_id, 
+                       r.url AS url, coalesce(r.default_branch, 'main') AS default_branch,
+                       count(DISTINCT m) AS modules_count,
+                       count(DISTINCT f) AS files_count,
+                       count(DISTINCT d) + count(DISTINCT dr) AS docs_count
+                ORDER BY r.name ASC
+                """
+                params = {"organization_id": organization_id.strip()}
+            else:
+                query = """
+                MATCH (r:Repository)
+                OPTIONAL MATCH (m:Module)-[:PART_OF]->(r)
+                OPTIONAL MATCH (f:File)-[:PART_OF]->(m)
+                OPTIONAL MATCH (d:Document)-[:DOCUMENTS]->(m)
+                OPTIONAL MATCH (dr:Document)-[:DOCUMENTS]->(r)
+                RETURN r.id AS id, r.name AS name, r.organization_id AS organization_id, 
+                       r.url AS url, coalesce(r.default_branch, 'main') AS default_branch,
+                       count(DISTINCT m) AS modules_count,
+                       count(DISTINCT f) AS files_count,
+                       count(DISTINCT d) + count(DISTINCT dr) AS docs_count
+                ORDER BY r.name ASC
+                """
+                params = {}
+
+            result = session.run(query, params)
+            records = [dict(row) for row in result]
+
+        repos_list = [
+            RepositorySummary(
+                id=rec.get("id") or "",
+                name=rec.get("name") or "",
+                organization_id=rec.get("organization_id") or "",
+                url=rec.get("url") or "",
+                default_branch=rec.get("default_branch") or "main",
+                modules_count=rec.get("modules_count") or 0,
+                files_count=rec.get("files_count") or 0,
+                docs_count=rec.get("docs_count") or 0,
+            )
+            for rec in records
+            if rec.get("id")
+        ]
+
+        return RepositoryListResponse(
+            repositories=repos_list,
+            total=len(repos_list),
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to query repositories from knowledge graph: {exc}",
+        )
+
 
 @router.post("", status_code=status.HTTP_202_ACCEPTED)
 async def ingest_repository(

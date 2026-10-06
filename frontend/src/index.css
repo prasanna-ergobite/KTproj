@@ -166,6 +166,22 @@ button:focus-visible, input:focus-visible { outline: 3px solid rgba(85, 121, 232
 
 .context-placeholder { color: #8b948e; font-size: 8px; line-height: 1.5; }
 
+.repo-selector-pill { display: flex; align-items: center; gap: 6px; padding: 4px 10px; background: #fff; border: 1px solid var(--line); border-radius: 8px; font-size: 11px; color: #35403b; }
+.repo-selector-pill select { background: transparent; border: 0; color: inherit; font-weight: 600; font-size: 11px; cursor: pointer; outline: none; max-width: 200px; }
+.existing-repos-card { margin-bottom: 24px; padding: 22px 24px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; }
+.existing-repos-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+.repo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+.repo-card { padding: 14px 16px; background: #fbfbf6; border: 1px solid #e1e2da; border-radius: 10px; cursor: pointer; transition: all .18s ease; display: flex; flex-direction: column; gap: 10px; }
+.repo-card:hover { transform: translateY(-2px); border-color: #a4bb9a; background: #f7f9f3; box-shadow: 0 6px 18px rgba(35, 45, 38, .06); }
+.repo-card.active { border-color: #638656; background: #f2f7ec; }
+.repo-card-top { display: flex; align-items: center; gap: 10px; }
+.repo-card-top > div { flex: 1; min-width: 0; }
+.repo-card-top strong { display: block; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.repo-card-top small { color: #74807a; font-size: 9px; }
+.repo-card-stats { display: flex; align-items: center; gap: 12px; font-size: 9px; color: #626e67; padding-top: 8px; border-top: 1px solid #e8e9e1; }
+.repo-card-stats span { display: flex; align-items: center; gap: 4px; }
+.repo-avatar { width: 32px; height: 32px; display: grid; place-items: center; color: #3b5b32; background: #e2f1d8; border-radius: 8px; flex: none; }
+
 @media (max-width: 1120px) {
   .content-wrap { padding-right: 28px; padding-left: 28px; }
   .dashboard-grid, .module-detail-grid { grid-template-columns: 1fr; }

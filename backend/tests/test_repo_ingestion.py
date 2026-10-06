@@ -349,6 +349,37 @@ def test_chroma_code_chunk_metadata_schema():
     datetime.fromisoformat(meta["ingested_at"])
 
 
+def test_list_repositories_endpoint():
+    """Verify GET /repos returns structured repository list from Neo4j."""
+    response = client.get("/repos")
+    assert response.status_code == 200
+    data = response.json()
+    assert "repositories" in data
+    assert "total" in data
+    assert isinstance(data["repositories"], list)
+    assert data["total"] == len(data["repositories"])
+
+    if data["total"] > 0:
+        first = data["repositories"][0]
+        assert "id" in first
+        assert "name" in first
+        assert "organization_id" in first
+        assert "modules_count" in first
+        assert "files_count" in first
+        assert "docs_count" in first
+
+
+def test_list_repositories_filter_by_org():
+    """Verify GET /repos?organization_id=... filters to matching tenant repositories."""
+    response = client.get("/repos?organization_id=RAG")
+    assert response.status_code == 200
+    data = response.json()
+    assert "repositories" in data
+    for repo in data["repositories"]:
+        assert repo["organization_id"] == "RAG"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-s"])
+
 

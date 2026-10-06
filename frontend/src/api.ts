@@ -26,6 +26,27 @@ export interface RepoIngestionResult extends JsonRecord {
   error?: string | null;
 }
 
+export interface RepositorySummary {
+  id: string;
+  name: string;
+  organization_id: string;
+  url: string;
+  default_branch: string;
+  modules_count: number;
+  files_count: number;
+  docs_count: number;
+}
+
+export interface RepositoryListResponse {
+  repositories: RepositorySummary[];
+  total: number;
+}
+
+export function listRepositories(organizationId?: string): Promise<RepositoryListResponse> {
+  const query = organizationId ? `?organization_id=${encodeURIComponent(organizationId)}` : '';
+  return request<RepositoryListResponse>(`/repos${query}`);
+}
+
 export interface HealthModule {
   module_id: string;
   module_name: string;

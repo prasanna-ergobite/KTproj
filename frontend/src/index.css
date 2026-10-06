@@ -166,8 +166,16 @@ button:focus-visible, input:focus-visible { outline: 3px solid rgba(85, 121, 232
 
 .context-placeholder { color: #8b948e; font-size: 8px; line-height: 1.5; }
 
-.repo-selector-pill { display: flex; align-items: center; gap: 6px; padding: 4px 10px; background: #fff; border: 1px solid var(--line); border-radius: 8px; font-size: 11px; color: #35403b; }
-.repo-selector-pill select { background: transparent; border: 0; color: inherit; font-weight: 600; font-size: 11px; cursor: pointer; outline: none; max-width: 200px; }
+.topbar-selectors { display: flex; align-items: center; gap: 8px; }
+.repo-selector-pill, .module-selector-pill { display: flex; align-items: center; gap: 6px; padding: 5px 10px; background: #fff; border: 1px solid var(--line); border-radius: 8px; font-size: 11px; color: #35403b; box-shadow: 0 1px 3px rgba(24,33,30,.04); }
+.repo-selector-pill:hover, .module-selector-pill:hover { border-color: #bcc3ba; }
+.repo-selector-pill svg, .module-selector-pill svg { flex: none; color: #6a7972; }
+.repo-selector-pill select, .module-selector-pill select { background: transparent; border: 0; color: inherit; font-weight: 600; font-size: 11px; cursor: pointer; outline: none; max-width: 180px; }
+.module-hero-main { flex: 1; min-width: 0; }
+.module-hero-eyebrow-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 6px; flex-wrap: wrap; }
+.hero-module-dropdown { display: flex; align-items: center; gap: 6px; background: #fffef9; border: 1px solid #dadbd0; padding: 4px 10px; border-radius: 6px; font-size: 11px; color: #53605a; box-shadow: 0 1px 3px rgba(24,33,30,.04); }
+.hero-module-dropdown label { font-weight: 700; color: #7a8680; font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; }
+.hero-module-dropdown select { background: transparent; border: 0; font-weight: 700; font-size: 12px; color: #212c27; cursor: pointer; outline: none; }
 .existing-repos-card { margin-bottom: 24px; padding: 22px 24px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; }
 .existing-repos-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
 .repo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }

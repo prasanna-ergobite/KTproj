@@ -57,6 +57,10 @@ function App() {
   const [backendOnline, setBackendOnline] = useState<boolean | null>(null);
   const [repositories, setRepositories] = useState<RepositorySummary[]>([]);
   const [loadingRepos, setLoadingRepos] = useState(false);
+  const [availableModules, setAvailableModules] = useState<HealthModule[]>([]);
+  const [loadingModules, setLoadingModules] = useState(false);
+  const [onboardingPacks, setOnboardingPacks] = useState<Record<string, OnboardingResult>>({});
+  const [ktQuestionsMap, setKtQuestionsMap] = useState<Record<string, KTQuestionsResult>>({});
 
   useEffect(() => {
     if (!toast) return;
@@ -64,12 +68,54 @@ function App() {
     return () => window.clearTimeout(timer);
   }, [toast]);
 
-  const selectRepository = (repo: RepositorySummary) => {
+  const loadModulesForRepo = async (repoId: string, orgId: string, preferredModuleId?: string) => {
+    if (!repoId || !orgId) {
+      setAvailableModules([]);
+      return [];
+    }
+    setLoadingModules(true);
+    try {
+      const res = await getRepoHealth(repoId, orgId);
+      const mods = res.modules || [];
+      setAvailableModules(mods);
+
+      if (mods.length > 0) {
+        const activeMod =
+          mods.find((m) => m.module_id === preferredModuleId) ||
+          mods.find((m) => m.module_name !== '_root') ||
+          mods[0];
+
+        setWorkspace((current) => ({
+          ...current,
+          selectedModuleId: activeMod.module_id,
+          selectedModuleName: activeMod.module_name,
+          selectedModulePath: activeMod.module_id.split(':module:')[1] || activeMod.module_name,
+        }));
+      }
+      return mods;
+    } catch {
+      return [];
+    } finally {
+      setLoadingModules(false);
+    }
+  };
+
+  const selectModule = (module: HealthModule) => {
+    setWorkspace((current) => ({
+      ...current,
+      selectedModuleId: module.module_id,
+      selectedModuleName: module.module_name,
+      selectedModulePath: module.module_id.split(':module:')[1] || module.module_name,
+    }));
+    setToast(`Selected module: ${module.module_name}`);
+  };
+
+  const selectRepository = (repo: RepositorySummary, preferredModuleId?: string) => {
     const next: WorkspaceContext = {
       organizationId: repo.organization_id,
       repositoryId: repo.id,
       repositoryName: repo.name,
-      selectedModuleId: '',
+      selectedModuleId: preferredModuleId || '',
       selectedModuleName: '',
       selectedModulePath: '',
       businessDocumentId: '',
@@ -88,8 +134,8 @@ function App() {
       },
     };
     setWorkspace(next);
-    setScreen('overview');
     setToast(`Loaded workspace for ${repo.name}`);
+    loadModulesForRepo(repo.id, repo.organization_id, preferredModuleId);
   };
 
   const fetchRepositories = async () => {
@@ -114,6 +160,8 @@ function App() {
         if (candidate) {
           selectRepository(candidate);
         }
+      } else if (current.repositoryId && current.organizationId) {
+        loadModulesForRepo(current.repositoryId, current.organizationId, current.selectedModuleId);
       }
     });
   }, []);
@@ -137,7 +185,9 @@ function App() {
           workspace={workspace}
           backendOnline={backendOnline}
           repositories={repositories}
+          availableModules={availableModules}
           onSelectRepo={selectRepository}
+          onSelectModule={selectModule}
           onMenu={() => setSidebarOpen(true)}
           onSetup={() => navigate('setup')}
         />
@@ -149,12 +199,42 @@ function App() {
               loadingRepos={loadingRepos}
               onSelectRepo={selectRepository}
               onRefreshRepos={fetchRepositories}
-              onComplete={(next) => { setWorkspace(next); setBackendOnline(true); navigate('overview'); fetchRepositories(); }}
+              onComplete={(next) => {
+                setWorkspace(next);
+                setBackendOnline(true);
+                navigate('overview');
+                fetchRepositories();
+                loadModulesForRepo(next.repositoryId, next.organizationId);
+              }}
             />
           )}
-          {screen === 'overview' && <OverviewScreen workspace={workspace} onNavigate={navigate} onModule={(module) => { setWorkspace((current) => ({ ...current, selectedModuleId: module.module_id, selectedModuleName: module.module_name, selectedModulePath: module.module_id.split(':module:')[1] || module.module_name })); setModuleTab('health'); navigate('module'); }} />}
+          {screen === 'overview' && (
+            <OverviewScreen
+              workspace={workspace}
+              onNavigate={navigate}
+              onModule={(module) => {
+                selectModule(module);
+                setModuleTab('health');
+                navigate('module');
+              }}
+            />
+          )}
           {screen === 'search' && <SearchScreen workspace={workspace} setToast={setToast} />}
-          {screen === 'module' && <ModuleScreen workspace={workspace} activeTab={moduleTab} setTab={setModuleTab} setToast={setToast} />}
+          {screen === 'module' && (
+            <ModuleScreen
+              workspace={workspace}
+              availableModules={availableModules}
+              loadingModules={loadingModules}
+              onSelectModule={selectModule}
+              activeTab={moduleTab}
+              setTab={setModuleTab}
+              setToast={setToast}
+              onboardingPacks={onboardingPacks}
+              setOnboardingPacks={setOnboardingPacks}
+              ktQuestionsMap={ktQuestionsMap}
+              setKtQuestionsMap={setKtQuestionsMap}
+            />
+          )}
           {screen === 'mapping' && <MappingScreen workspace={workspace} setWorkspace={setWorkspace} setToast={setToast} />}
         </main>
       </div>
@@ -177,14 +257,18 @@ function Topbar({
   workspace,
   backendOnline,
   repositories,
+  availableModules,
   onSelectRepo,
+  onSelectModule,
   onMenu,
   onSetup,
 }: {
   workspace: WorkspaceContext;
   backendOnline: boolean | null;
   repositories: RepositorySummary[];
+  availableModules: HealthModule[];
   onSelectRepo: (repo: RepositorySummary) => void;
+  onSelectModule: (module: HealthModule) => void;
   onMenu: () => void;
   onSetup: () => void;
 }) {
@@ -198,26 +282,53 @@ function Topbar({
         <span>{workspace.organizationId || 'No organization'}</span>
         <ChevronRight size={14} />
         <strong>{workspace.repositoryName || 'No repository'}</strong>
+        {workspace.selectedModuleName && (
+          <>
+            <ChevronRight size={14} />
+            <span style={{ color: '#25332d', fontWeight: 600 }}>{workspace.selectedModuleName}</span>
+          </>
+        )}
       </div>
-      {repositories.length > 0 && (
-        <div className="repo-selector-pill" title="Switch active repository">
-          <FolderGit2 size={14} />
-          <select
-            value={workspace.repositoryId}
-            onChange={(e) => {
-              const selected = repositories.find((r) => r.id === e.target.value);
-              if (selected) onSelectRepo(selected);
-            }}
-          >
-            <option value="" disabled>Select Repository</option>
-            {repositories.map((r) => (
-              <option key={r.id} value={r.id}>
-                {r.name} ({r.organization_id})
-              </option>
-            ))}
-          </select>
-        </div>
-      )}
+      <div className="topbar-selectors">
+        {repositories.length > 0 && (
+          <div className="repo-selector-pill" title="Switch active repository">
+            <FolderGit2 size={14} />
+            <select
+              value={workspace.repositoryId}
+              onChange={(e) => {
+                const selected = repositories.find((r) => r.id === e.target.value);
+                if (selected) onSelectRepo(selected);
+              }}
+            >
+              <option value="" disabled>Select Repository</option>
+              {repositories.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.name} ({r.organization_id})
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+        {availableModules.length > 0 && (
+          <div className="module-selector-pill" title="Switch active module">
+            <Boxes size={14} />
+            <select
+              value={workspace.selectedModuleId}
+              onChange={(e) => {
+                const selected = availableModules.find((m) => m.module_id === e.target.value);
+                if (selected) onSelectModule(selected);
+              }}
+            >
+              <option value="" disabled>Select Module</option>
+              {availableModules.map((m) => (
+                <option key={m.module_id} value={m.module_id}>
+                  {m.module_name} ({Math.round(m.overall_score)}%)
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+      </div>
       <div className="topbar-actions">
         <span className={`api-pill ${backendOnline === false ? 'offline' : ''}`} title={API_BASE_URL}>
           <i /> {label}
@@ -413,46 +524,649 @@ function LiveSearchCard({ result, expanded, onOpen, setToast }: { result: Search
   return <article className={`result-card ${expanded ? 'expanded' : ''}`} onClick={onOpen}><div className="result-top"><div className={`result-type ${result.result_type}`}><span>{isCode ? <Code2 size={15} /> : <FileText size={15} />}{isCode ? 'Code evidence' : 'Document evidence'}</span></div><div className="result-score"><Sparkles size={13} />Relevance <strong>{score.toFixed(2)}</strong></div></div><h3>{title}</h3><div className="result-path">{path}<span>{lineLabel}</span></div><p>{result.text}</p>{expanded && <div className="code-preview"><div><span /><span /><span /><em>{path}</em></div><pre><code>{result.text}</code></pre></div>}<footer><div>{tags.map((tag) => <span key={tag}>{tag}</span>)}</div><button onClick={(event) => { event.stopPropagation(); navigator.clipboard?.writeText(`${path}\n${result.text}`); setToast('Evidence copied'); }}><Link2 size={14} />Copy evidence</button></footer></article>;
 }
 
-function ModuleScreen({ workspace, activeTab, setTab, setToast }: { workspace: WorkspaceContext; activeTab: ModuleTab; setTab: (tab: ModuleTab) => void; setToast: (message: string) => void }) {
-  const [health, setHealth] = useState<HealthModule | null>(null); const [loading, setLoading] = useState(false); const [error, setError] = useState('');
-  const refresh = async () => { if (!workspace.selectedModuleId) return; setLoading(true); setError(''); try { setHealth(await getModuleHealth(workspace.selectedModuleId, workspace.organizationId)); } catch (reason) { setError(reason instanceof Error ? reason.message : 'Unable to load module health.'); } finally { setLoading(false); } };
-  useEffect(() => { refresh(); }, [workspace.selectedModuleId, workspace.organizationId]);
-  return <div className="content-wrap module-page"><div className="module-hero"><div className="module-symbol"><Boxes size={24} /></div><div><div className="eyebrow">Module intelligence</div><h1>{workspace.selectedModuleName || 'Select a module'}</h1><p>{workspace.selectedModulePath || 'Open the repository overview to choose a module'} <span>·</span> Backend graph data</p></div><div className="module-hero-actions"><button className="secondary-button" onClick={refresh} disabled={loading || !workspace.selectedModuleId}><RefreshCw size={16} className={loading ? 'spin' : ''} />Refresh analysis</button><button className="icon-button"><MoreHorizontal size={18} /></button></div></div>{error && <div className="inline-notice warning"><Info size={16} /><span><strong>Module health is unavailable.</strong> {error}</span></div>}<div className="tab-strip"><button className={activeTab === 'health' ? 'active' : ''} onClick={() => setTab('health')}><Gauge size={17} />Health & gaps</button><button className={activeTab === 'onboarding' ? 'active' : ''} onClick={() => setTab('onboarding')}><BookOpen size={17} />Onboarding pack</button><button className={activeTab === 'questions' ? 'active' : ''} onClick={() => setTab('questions')}><MessageSquareText size={17} />KT prep questions</button></div>{activeTab === 'health' && <HealthTab health={health} loading={loading} onGenerate={() => setTab('onboarding')} />}{activeTab === 'onboarding' && <OnboardingTab workspace={workspace} setToast={setToast} />}{activeTab === 'questions' && <QuestionsTab workspace={workspace} setToast={setToast} />}</div>;
+function ModuleScreen({
+  workspace,
+  availableModules,
+  loadingModules,
+  onSelectModule,
+  activeTab,
+  setTab,
+  setToast,
+  onboardingPacks,
+  setOnboardingPacks,
+  ktQuestionsMap,
+  setKtQuestionsMap,
+}: {
+  workspace: WorkspaceContext;
+  availableModules: HealthModule[];
+  loadingModules: boolean;
+  onSelectModule: (module: HealthModule) => void;
+  activeTab: ModuleTab;
+  setTab: (tab: ModuleTab) => void;
+  setToast: (message: string) => void;
+  onboardingPacks: Record<string, OnboardingResult>;
+  setOnboardingPacks: React.Dispatch<React.SetStateAction<Record<string, OnboardingResult>>>;
+  ktQuestionsMap: Record<string, KTQuestionsResult>;
+  setKtQuestionsMap: React.Dispatch<React.SetStateAction<Record<string, KTQuestionsResult>>>;
+}) {
+  const [health, setHealth] = useState<HealthModule | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  // Auto-select first active module if none selected yet
+  useEffect(() => {
+    if (!workspace.selectedModuleId && availableModules.length > 0) {
+      const candidate = availableModules.find((m) => m.module_name !== '_root') || availableModules[0];
+      if (candidate) onSelectModule(candidate);
+    }
+  }, [workspace.selectedModuleId, availableModules, onSelectModule]);
+
+  const refresh = async () => {
+    if (!workspace.selectedModuleId || !workspace.organizationId) return;
+    setLoading(true);
+    setError('');
+    try {
+      setHealth(await getModuleHealth(workspace.selectedModuleId, workspace.organizationId));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Unable to load module health.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    refresh();
+  }, [workspace.selectedModuleId, workspace.organizationId]);
+
+  return (
+    <div className="content-wrap module-page">
+      <div className="module-hero">
+        <div className="module-symbol"><Boxes size={24} /></div>
+        <div className="module-hero-main">
+          <div className="module-hero-eyebrow-row">
+            <div className="eyebrow">Module intelligence</div>
+            {availableModules.length > 0 && (
+              <div className="hero-module-dropdown">
+                <label htmlFor="hero-mod-select">Module:</label>
+                <select
+                  id="hero-mod-select"
+                  value={workspace.selectedModuleId}
+                  onChange={(e) => {
+                    const selected = availableModules.find((m) => m.module_id === e.target.value);
+                    if (selected) onSelectModule(selected);
+                  }}
+                >
+                  {availableModules.map((m) => (
+                    <option key={m.module_id} value={m.module_id}>
+                      {m.module_name} (Score: {Math.round(m.overall_score)}%)
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </div>
+          <h1>{workspace.selectedModuleName || (loadingModules ? 'Loading module…' : 'Select a module')}</h1>
+          <p>
+            {workspace.selectedModulePath ? `Path: ${workspace.selectedModulePath}` : 'Select a module to view code topology'}
+            <span>·</span>
+            Repository: {workspace.repositoryName || 'Not selected'}
+            <span>·</span>
+            Backend graph data
+          </p>
+        </div>
+        <div className="module-hero-actions">
+          <button className="secondary-button" onClick={refresh} disabled={loading || !workspace.selectedModuleId}>
+            <RefreshCw size={16} className={loading ? 'spin' : ''} />
+            Refresh analysis
+          </button>
+          <button className="icon-button"><MoreHorizontal size={18} /></button>
+        </div>
+      </div>
+
+      {error && (
+        <div className="inline-notice warning">
+          <Info size={16} />
+          <span><strong>Module health is unavailable.</strong> {error}</span>
+        </div>
+      )}
+
+      <div className="tab-strip">
+        <button className={activeTab === 'health' ? 'active' : ''} onClick={() => setTab('health')}>
+          <Gauge size={17} />Health & gaps
+        </button>
+        <button className={activeTab === 'onboarding' ? 'active' : ''} onClick={() => setTab('onboarding')}>
+          <BookOpen size={17} />Onboarding pack
+        </button>
+        <button className={activeTab === 'questions' ? 'active' : ''} onClick={() => setTab('questions')}>
+          <MessageSquareText size={17} />KT prep questions
+        </button>
+      </div>
+
+      {activeTab === 'health' && (
+        <HealthTab
+          health={health}
+          loading={loading}
+          availableModules={availableModules}
+          onSelectModule={onSelectModule}
+          onGenerate={() => setTab('onboarding')}
+        />
+      )}
+
+      {activeTab === 'onboarding' && (
+        <OnboardingTab
+          workspace={workspace}
+          availableModules={availableModules}
+          onSelectModule={onSelectModule}
+          savedResult={workspace.selectedModuleId ? onboardingPacks[workspace.selectedModuleId] : null}
+          onSaveResult={(res) => {
+            if (workspace.selectedModuleId) {
+              setOnboardingPacks((prev) => ({ ...prev, [workspace.selectedModuleId]: res }));
+            }
+          }}
+          setToast={setToast}
+        />
+      )}
+
+      {activeTab === 'questions' && (
+        <QuestionsTab
+          workspace={workspace}
+          availableModules={availableModules}
+          onSelectModule={onSelectModule}
+          savedResult={workspace.selectedModuleId ? ktQuestionsMap[workspace.selectedModuleId] : null}
+          onSaveResult={(res) => {
+            if (workspace.selectedModuleId) {
+              setKtQuestionsMap((prev) => ({ ...prev, [workspace.selectedModuleId]: res }));
+            }
+          }}
+          setToast={setToast}
+        />
+      )}
+    </div>
+  );
 }
 
-function HealthTab({ health, loading, onGenerate }: { health: HealthModule | null; loading: boolean; onGenerate: () => void }) {
+function HealthTab({
+  health,
+  loading,
+  availableModules,
+  onSelectModule,
+  onGenerate,
+}: {
+  health: HealthModule | null;
+  loading: boolean;
+  availableModules: HealthModule[];
+  onSelectModule: (module: HealthModule) => void;
+  onGenerate: () => void;
+}) {
   if (loading && !health) return <div className="module-tab-content panel-loading"><Loader2 className="spin" size={24} />Calculating module health from graph evidence…</div>;
-  if (!health) return <div className="module-tab-content empty-state"><Gauge size={25} /><strong>No health result available</strong><span>Select a module from the overview, then refresh this analysis.</span></div>;
-  const overall = Math.round(health.overall_score); const docs = Math.round(health.dimensions.doc_score); const ownership = Math.round(health.dimensions.ownership_score); const gaps = health.gaps;
-  return <div className="module-tab-content"><div className="health-summary-grid"><section className="health-score-card"><div className="health-score-top"><span>KT health score</span><em>{overall >= 75 ? 'Healthy' : overall >= 60 ? 'Watch' : 'At risk'}</em></div><div className="health-gauge" style={{ '--score': overall } as React.CSSProperties}><svg viewBox="0 0 180 100"><path d="M20 88 A70 70 0 0 1 160 88" /><path className="fill" d="M20 88 A70 70 0 0 1 160 88" /></svg><div><strong>{overall}</strong><span>out of 100</span></div></div><p>{health.dimensions.sole_owner_risk ? 'Ownership risk is holding this module back.' : 'Calculated from documentation and ownership signals.'}</p></section><section className="dimension-card"><div className="dimension-icon doc"><BookOpen size={19} /></div><span>Documentation</span><strong>{docs}%</strong><div className="dimension-track"><i style={{ width: `${docs}%` }} /></div><small>Graph and indexed documentation coverage</small></section><section className="dimension-card"><div className="dimension-icon owner"><UsersRound size={19} /></div><span>Ownership</span><strong>{ownership}%</strong><div className="dimension-track orange"><i style={{ width: `${ownership}%` }} /></div><small>Bus factor: {health.dimensions.bus_factor}</small></section></div>
-    <div className="module-detail-grid"><section className="surface gap-panel"><div className="panel-heading"><div><span className="eyebrow">Priority actions</span><h2>Close these knowledge gaps</h2></div><span className="count-badge">{gaps.length} gaps</span></div>{gaps.length ? gaps.map((gap, index) => <GapItem key={gap} tone={index === 0 ? 'critical' : index < 3 ? 'warning' : 'neutral'} title={gap} text="This signal was calculated from the current repository graph and indexed documentation." meta={index === 0 ? 'Priority risk' : 'Action recommended'} action="Review signal" />) : <div className="empty-state"><CheckCircle2 size={23} /><strong>No material KT gaps found</strong><span>This module currently meets the configured health thresholds.</span></div>}</section>
-      <aside className="surface owner-panel"><div className="panel-heading"><div><span className="eyebrow">Ownership signal</span><h2>Bus factor</h2></div></div><div className="owner-profile"><div className="avatar large">BF</div><div><strong>{health.dimensions.bus_factor} active contributor{health.dimensions.bus_factor === 1 ? '' : 's'}</strong><span>{health.dimensions.sole_owner_risk ? 'Sole-owner risk detected' : 'Ownership spread from git history'}</span></div><em>{ownership}%</em></div><div className="ownership-chart"><span style={{ width: `${ownership}%` }} /><span style={{ width: `${Math.max(100 - ownership, 0)}%` }} /></div><div className="owner-warning"><Info size={17} /><p>Ownership is based on file-level git history and should be treated as a strong signal, not exact blame.</p></div><button className="primary-button full" onClick={onGenerate}><WandSparkles size={16} />Generate onboarding pack</button></aside></div></div>;
+  if (!health) {
+    return (
+      <div className="module-tab-content empty-state">
+        <Gauge size={25} />
+        <strong>No health result available</strong>
+        <span>
+          {availableModules.length > 0
+            ? 'Choose a module from the dropdown above to view its health score and gaps.'
+            : 'Select a repository and module to begin.'}
+        </span>
+        {availableModules.length > 0 && (
+          <div style={{ marginTop: '14px' }}>
+            <button
+              className="primary-button compact"
+              onClick={() => {
+                const candidate = availableModules.find((m) => m.module_name !== '_root') || availableModules[0];
+                if (candidate) onSelectModule(candidate);
+              }}
+            >
+              Select {availableModules[0].module_name}
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  }
+  const overall = Math.round(health.overall_score);
+  const docs = Math.round(health.dimensions.doc_score);
+  const ownership = Math.round(health.dimensions.ownership_score);
+  const gaps = health.gaps;
+  return (
+    <div className="module-tab-content">
+      <div className="health-summary-grid">
+        <section className="health-score-card">
+          <div className="health-score-top">
+            <span>KT health score</span>
+            <em>{overall >= 75 ? 'Healthy' : overall >= 60 ? 'Watch' : 'At risk'}</em>
+          </div>
+          <div className="health-gauge" style={{ '--score': overall } as React.CSSProperties}>
+            <svg viewBox="0 0 180 100">
+              <path d="M20 88 A70 70 0 0 1 160 88" />
+              <path className="fill" d="M20 88 A70 70 0 0 1 160 88" />
+            </svg>
+            <div>
+              <strong>{overall}</strong>
+              <span>out of 100</span>
+            </div>
+          </div>
+          <p>{health.dimensions.sole_owner_risk ? 'Ownership risk is holding this module back.' : 'Calculated from documentation and ownership signals.'}</p>
+        </section>
+        <section className="dimension-card">
+          <div className="dimension-icon doc"><BookOpen size={19} /></div>
+          <span>Documentation</span>
+          <strong>{docs}%</strong>
+          <div className="dimension-track"><i style={{ width: `${docs}%` }} /></div>
+          <small>Graph and indexed documentation coverage</small>
+        </section>
+        <section className="dimension-card">
+          <div className="dimension-icon owner"><UsersRound size={19} /></div>
+          <span>Ownership</span>
+          <strong>{ownership}%</strong>
+          <div className="dimension-track orange"><i style={{ width: `${ownership}%` }} /></div>
+          <small>Bus factor: {health.dimensions.bus_factor}</small>
+        </section>
+      </div>
+      <div className="module-detail-grid">
+        <section className="surface gap-panel">
+          <div className="panel-heading">
+            <div>
+              <span className="eyebrow">Priority actions</span>
+              <h2>Close these knowledge gaps</h2>
+            </div>
+            <span className="count-badge">{gaps.length} gaps</span>
+          </div>
+          {gaps.length ? (
+            gaps.map((gap, index) => (
+              <GapItem
+                key={gap}
+                tone={index === 0 ? 'critical' : index < 3 ? 'warning' : 'neutral'}
+                title={gap}
+                text="This signal was calculated from the current repository graph and indexed documentation."
+                meta={index === 0 ? 'Priority risk' : 'Action recommended'}
+                action="Review signal"
+              />
+            ))
+          ) : (
+            <div className="empty-state">
+              <CheckCircle2 size={23} />
+              <strong>No material KT gaps found</strong>
+              <span>This module currently meets the configured health thresholds.</span>
+            </div>
+          )}
+        </section>
+        <aside className="surface owner-panel">
+          <div className="panel-heading">
+            <div>
+              <span className="eyebrow">Ownership signal</span>
+              <h2>Bus factor</h2>
+            </div>
+          </div>
+          <div className="owner-profile">
+            <div className="avatar large">BF</div>
+            <div>
+              <strong>{health.dimensions.bus_factor} active contributor{health.dimensions.bus_factor === 1 ? '' : 's'}</strong>
+              <span>{health.dimensions.sole_owner_risk ? 'Sole-owner risk detected' : 'Ownership spread from git history'}</span>
+            </div>
+            <em>{ownership}%</em>
+          </div>
+          <div className="ownership-chart">
+            <span style={{ width: `${ownership}%` }} />
+            <span style={{ width: `${Math.max(100 - ownership, 0)}%` }} />
+          </div>
+          <div className="owner-warning">
+            <Info size={17} />
+            <p>Ownership is based on file-level git history and should be treated as a strong signal, not exact blame.</p>
+          </div>
+          <button className="primary-button full" onClick={onGenerate}>
+            <WandSparkles size={16} />Generate onboarding pack
+          </button>
+        </aside>
+      </div>
+    </div>
+  );
 }
 
 function GapItem({ tone, title, text, meta, action }: { tone: string; title: string; text: string; meta: string; action: string }) { return <div className="gap-item"><span className={`gap-severity ${tone}`} /><div><strong>{title}</strong><p>{text}</p><small>{meta}</small></div><button>{action}<ArrowUpRight size={14} /></button></div>; }
 
-function OnboardingTab({ workspace, setToast }: { workspace: WorkspaceContext; setToast: (message: string) => void }) {
-  const sections = ['Start here', 'Module purpose', 'Key files', 'Entry points', 'Who to talk to', 'Dependencies', 'First-week tasks']; const [active, setActive] = useState('Start here'); const [result, setResult] = useState<OnboardingResult | null>(null); const [loading, setLoading] = useState(false); const [jobStatus, setJobStatus] = useState(''); const [error, setError] = useState('');
-  const generate = async () => { if (!workspace.selectedModuleId) { setError('Select a module from the repository overview first.'); return; } setLoading(true); setError(''); setJobStatus('Queueing generation…'); try { const queued = await startOnboardingPack(workspace.selectedModuleId, workspace.organizationId); const task = await pollTask<OnboardingResult>('/onboarding-pack/tasks', queued.task_id, (update) => setJobStatus(update.status === 'running' ? 'Assembling graph context and generating…' : 'Generation queued…')); if (task.result) setResult(task.result); } catch (reason) { setError(reason instanceof Error ? reason.message : 'Onboarding generation failed.'); } finally { setLoading(false); } };
-  const generated = result;
+function OnboardingTab({
+  workspace,
+  availableModules,
+  onSelectModule,
+  savedResult,
+  onSaveResult,
+  setToast,
+}: {
+  workspace: WorkspaceContext;
+  availableModules: HealthModule[];
+  onSelectModule: (module: HealthModule) => void;
+  savedResult: OnboardingResult | null | undefined;
+  onSaveResult: (result: OnboardingResult) => void;
+  setToast: (message: string) => void;
+}) {
+  const sections = ['Start here', 'Module purpose', 'Key files', 'Entry points', 'Who to talk to', 'Dependencies', 'First-week tasks'];
+  const [active, setActive] = useState('Start here');
+  const [loading, setLoading] = useState(false);
+  const [jobStatus, setJobStatus] = useState('');
+  const [error, setError] = useState('');
+
+  const generate = async () => {
+    let targetModuleId = workspace.selectedModuleId;
+    let targetOrgId = workspace.organizationId;
+
+    if (!targetModuleId && availableModules.length > 0) {
+      const candidate = availableModules.find((m) => m.module_name !== '_root') || availableModules[0];
+      if (candidate) {
+        onSelectModule(candidate);
+        targetModuleId = candidate.module_id;
+      }
+    }
+
+    if (!targetModuleId) {
+      setError('Please select a module from the dropdown above first.');
+      return;
+    }
+    if (!targetOrgId) {
+      setError('Please select or ingest a repository first.');
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+    setJobStatus('Queueing onboarding generation…');
+    try {
+      const queued = await startOnboardingPack(targetModuleId, targetOrgId);
+      const task = await pollTask<OnboardingResult>('/onboarding-pack/tasks', queued.task_id, (update) => {
+        setJobStatus(update.status === 'running' ? 'Assembling graph context and generating narrative…' : 'Generation queued…');
+      });
+      if (task.result) {
+        onSaveResult(task.result);
+        setToast('Onboarding pack generated successfully!');
+      }
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Onboarding generation failed.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const generated = savedResult;
   const modulePurpose = generated ? String((generated.sections.module_purpose as { content?: string } | undefined)?.content || 'No module-purpose narrative was returned.') : '';
   const keyFiles = generated ? ((generated.sections.key_files as { files?: Array<Record<string, unknown>> } | undefined)?.files || []).slice(0, 5).map((file) => [String(file.filename || file.file_path || file.path || 'Source file'), String(file.relative_path || file.file_path || 'Graph-derived key file')]) : [];
   const tasks = generated ? ((generated.sections.suggested_first_tasks as { tasks?: Array<Record<string, unknown>> } | undefined)?.tasks || []).slice(0, 5).map((task) => [String(task.description || 'Review module context'), String(task.rationale || task.priority || 'Generated from module evidence')]) : [];
   const copyPack = () => { navigator.clipboard?.writeText(generated?.markdown || modulePurpose); setToast('Onboarding pack copied'); };
   const downloadPack = () => { const blob = new Blob([generated?.markdown || modulePurpose], { type: 'text/markdown' }); const url = URL.createObjectURL(blob); const anchor = document.createElement('a'); anchor.href = url; anchor.download = `${workspace.selectedModuleName || 'module'}-onboarding.md`; anchor.click(); URL.revokeObjectURL(url); setToast('Markdown download prepared'); };
-  if (!generated) return <div className="module-tab-content generation-empty"><div className="generation-icon"><BookOpen size={28} /></div><span className="status-chip"><Sparkles size={13} />Graph-grounded workflow</span><h2>Generate an onboarding pack.</h2><p>AutoKT will assemble topology, key files, owners, existing documentation, dependency manifests, coverage, and suggested first tasks for <strong>{workspace.selectedModuleName || 'the selected module'}</strong>.</p>{error && <div className="inline-notice error"><Info size={16} /><span>{error}</span></div>}<button className="primary-button" onClick={generate} disabled={loading}>{loading ? <Loader2 className="spin" size={17} /> : <WandSparkles size={17} />}{loading ? jobStatus : 'Generate onboarding pack'}</button></div>;
-  return <div className="module-tab-content document-layout"><aside className="doc-toc"><span>In this pack</span>{sections.map((section, index) => <button className={active === section ? 'active' : ''} onClick={() => setActive(section)} key={section}><em>0{index + 1}</em>{section}</button>)}<div className="quality-card"><ShieldCheck size={17} /><div><strong>Grounding: {generated.generation_quality}</strong><span>Graph, vector, and computed evidence</span></div></div></aside><article className="onboarding-document"><div className="document-toolbar"><div><span className="status-chip"><Sparkles size={13} />AI + graph generated</span><small>{new Date(generated.generated_at).toLocaleString()}</small></div><div><button onClick={copyPack}><Copy size={16} />Copy</button><button onClick={downloadPack}><ArrowDown size={16} />Markdown</button><button onClick={generate}><RefreshCw size={16} /></button></div></div><header><div className="doc-kicker">Developer onboarding · {generated.module_name}</div><h2>Your guide to {generated.module_name}.</h2><p>{modulePurpose}</p><div className="doc-meta"><span><Boxes size={15} />Graph context</span><span><UserRound size={15} />Ownership evidence</span><span><BookOpen size={15} />Documentation coverage</span></div></header><section><span className="section-number">01</span><h3>Start here</h3><p>{String((generated.sections.onboarding_narrative as { content?: string } | undefined)?.content || modulePurpose)}</p><div className="callout"><Zap size={18} /><div><strong>Grounded orientation</strong><p>This guide combines deterministic graph evidence with provider-generated narrative.</p></div></div></section><section><span className="section-number">02</span><h3>Key files to understand</h3><div className="key-file-list">{keyFiles.length ? keyFiles.map(([file, desc], i) => <div key={`${file}-${i}`}><span>{i + 1}</span><FileCode2 size={18} /><div><strong>{file}</strong><p>{desc}</p></div><button><ArrowUpRight size={15} /></button></div>) : <div className="empty-state"><Info size={18} /><strong>No key files returned</strong></div>}</div></section><section><span className="section-number">03</span><h3>Your first-week tasks</h3><div className="task-list">{tasks.length ? tasks.map(([task, rationale], index) => <label key={`${task}-${index}`}><input type="checkbox" /><span><strong>{task}</strong><small>{rationale}</small></span></label>) : <div className="empty-state"><Info size={18} /><strong>No suggested tasks returned</strong></div>}</div></section></article></div>;
+
+  if (!generated) {
+    return (
+      <div className="module-tab-content generation-empty">
+        <div className="generation-icon"><BookOpen size={28} /></div>
+        <span className="status-chip"><Sparkles size={13} />Graph-grounded workflow</span>
+        <h2>Generate an onboarding pack.</h2>
+        <p>AutoKT will assemble topology, key files, owners, existing documentation, dependency manifests, coverage, and suggested first tasks for <strong>{workspace.selectedModuleName || 'the selected module'}</strong>.</p>
+        {error && <div className="inline-notice error"><Info size={16} /><span>{error}</span></div>}
+        <button className="primary-button" onClick={generate} disabled={loading}>
+          {loading ? <Loader2 className="spin" size={17} /> : <WandSparkles size={17} />}
+          {loading ? jobStatus : 'Generate onboarding pack'}
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="module-tab-content document-layout">
+      <aside className="doc-toc">
+        <span>In this pack</span>
+        {sections.map((section, index) => (
+          <button className={active === section ? 'active' : ''} onClick={() => setActive(section)} key={section}>
+            <em>0{index + 1}</em>{section}
+          </button>
+        ))}
+        <div className="quality-card">
+          <ShieldCheck size={17} />
+          <div>
+            <strong>Grounding: {generated.generation_quality}</strong>
+            <span>Graph, vector, and computed evidence</span>
+          </div>
+        </div>
+      </aside>
+      <article className="onboarding-document">
+        <div className="document-toolbar">
+          <div>
+            <span className="status-chip"><Sparkles size={13} />AI + graph generated</span>
+            <small>{new Date(generated.generated_at).toLocaleString()}</small>
+          </div>
+          <div>
+            <button onClick={copyPack}><Copy size={16} />Copy</button>
+            <button onClick={downloadPack}><ArrowDown size={16} />Markdown</button>
+            <button onClick={generate} disabled={loading} title="Regenerate pack">
+              <RefreshCw size={16} className={loading ? 'spin' : ''} />
+            </button>
+          </div>
+        </div>
+        {loading && (
+          <div className="inline-notice info" style={{ marginBottom: '16px' }}>
+            <Loader2 size={16} className="spin" />
+            <span>{jobStatus}</span>
+          </div>
+        )}
+        {error && (
+          <div className="inline-notice error" style={{ marginBottom: '16px' }}>
+            <Info size={16} />
+            <span>{error}</span>
+          </div>
+        )}
+        <header>
+          <div className="doc-kicker">Developer onboarding · {generated.module_name}</div>
+          <h2>Your guide to {generated.module_name}.</h2>
+          <p>{modulePurpose}</p>
+          <div className="doc-meta">
+            <span><Boxes size={15} />Graph context</span>
+            <span><UserRound size={15} />Ownership evidence</span>
+            <span><BookOpen size={15} />Documentation coverage</span>
+          </div>
+        </header>
+        <section>
+          <span className="section-number">01</span>
+          <h3>Start here</h3>
+          <p>{String((generated.sections.onboarding_narrative as { content?: string } | undefined)?.content || modulePurpose)}</p>
+          <div className="callout">
+            <Zap size={18} />
+            <div>
+              <strong>Grounded orientation</strong>
+              <p>This guide combines deterministic graph evidence with provider-generated narrative.</p>
+            </div>
+          </div>
+        </section>
+        <section>
+          <span className="section-number">02</span>
+          <h3>Key files to understand</h3>
+          <div className="key-file-list">
+            {keyFiles.length ? (
+              keyFiles.map(([file, desc], i) => (
+                <div key={`${file}-${i}`}>
+                  <span>{i + 1}</span>
+                  <FileCode2 size={18} />
+                  <div>
+                    <strong>{file}</strong>
+                    <p>{desc}</p>
+                  </div>
+                  <button><ArrowUpRight size={15} /></button>
+                </div>
+              ))
+            ) : (
+              <div className="empty-state"><Info size={18} /><strong>No key files returned</strong></div>
+            )}
+          </div>
+        </section>
+        <section>
+          <span className="section-number">03</span>
+          <h3>Your first-week tasks</h3>
+          <div className="task-list">
+            {tasks.length ? (
+              tasks.map(([task, rationale], index) => (
+                <label key={`${task}-${index}`}>
+                  <input type="checkbox" />
+                  <span>
+                    <strong>{task}</strong>
+                    <small>{rationale}</small>
+                  </span>
+                </label>
+              ))
+            ) : (
+              <div className="empty-state"><Info size={18} /><strong>No suggested tasks returned</strong></div>
+            )}
+          </div>
+        </section>
+      </article>
+    </div>
+  );
 }
 
-function QuestionsTab({ workspace, setToast }: { workspace: WorkspaceContext; setToast: (message: string) => void }) {
-  const [result, setResult] = useState<KTQuestionsResult | null>(null); const [loading, setLoading] = useState(false); const [jobStatus, setJobStatus] = useState(''); const [error, setError] = useState('');
-  const generate = async () => { if (!workspace.selectedModuleId) { setError('Select a module from the repository overview first.'); return; } setLoading(true); setError(''); setJobStatus('Queueing question generation…'); try { const queued = await startKTQuestions(workspace.selectedModuleId, workspace.organizationId); const task = await pollTask<KTQuestionsResult>('/kt-prep-questions/tasks', queued.task_id, (update) => setJobStatus(update.status === 'running' ? 'Analysing gaps and synthesizing questions…' : 'Question generation queued…')); if (task.result) setResult(task.result); } catch (reason) { setError(reason instanceof Error ? reason.message : 'Question generation failed.'); } finally { setLoading(false); } };
+function QuestionsTab({
+  workspace,
+  availableModules,
+  onSelectModule,
+  savedResult,
+  onSaveResult,
+  setToast,
+}: {
+  workspace: WorkspaceContext;
+  availableModules: HealthModule[];
+  onSelectModule: (module: HealthModule) => void;
+  savedResult: KTQuestionsResult | null | undefined;
+  onSaveResult: (result: KTQuestionsResult) => void;
+  setToast: (message: string) => void;
+}) {
+  const [loading, setLoading] = useState(false);
+  const [jobStatus, setJobStatus] = useState('');
+  const [error, setError] = useState('');
+
+  const generate = async () => {
+    let targetModuleId = workspace.selectedModuleId;
+    let targetOrgId = workspace.organizationId;
+
+    if (!targetModuleId && availableModules.length > 0) {
+      const candidate = availableModules.find((m) => m.module_name !== '_root') || availableModules[0];
+      if (candidate) {
+        onSelectModule(candidate);
+        targetModuleId = candidate.module_id;
+      }
+    }
+
+    if (!targetModuleId) {
+      setError('Please select a module from the dropdown above first.');
+      return;
+    }
+    if (!targetOrgId) {
+      setError('Please select or ingest a repository first.');
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+    setJobStatus('Queueing question generation…');
+    try {
+      const queued = await startKTQuestions(targetModuleId, targetOrgId);
+      const task = await pollTask<KTQuestionsResult>('/kt-prep-questions/tasks', queued.task_id, (update) => {
+        setJobStatus(update.status === 'running' ? 'Analysing gaps and synthesizing questions…' : 'Question generation queued…');
+      });
+      if (task.result) {
+        onSaveResult(task.result);
+        setToast('KT prep questions generated successfully!');
+      }
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Question generation failed.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const result = savedResult;
   const parsedQuestions = result?.questions.split('\n').map((line) => line.replace(/^[-*\d.)\s]+/, '').trim()).filter((line) => line.length > 5) || [];
   const questions = result ? parsedQuestions.map((title, index) => ({ n: String(index + 1).padStart(2, '0'), tag: 'Generated', title, why: result.signals_used[index % Math.max(result.signals_used.length, 1)] || 'Derived from current graph and documentation gaps.' })) : [];
   const copyAll = () => { navigator.clipboard?.writeText(questions.map((question) => `${question.n}. ${question.title}`).join('\n')); setToast('All questions copied'); };
-  if (!result) return <div className="module-tab-content generation-empty"><div className="generation-icon"><MessageSquareText size={28} /></div><span className="status-chip"><Sparkles size={13} />Gap-grounded workflow</span><h2>Prepare a KT question set.</h2><p>Questions will be generated from undocumented functions, ownership concentration, missing documentation, architecture gaps, and dependency signals for <strong>{workspace.selectedModuleName || 'the selected module'}</strong>.</p>{error && <div className="inline-notice error"><Info size={16} /><span>{error}</span></div>}<button className="primary-button" onClick={generate} disabled={loading}>{loading ? <Loader2 className="spin" size={17} /> : <MessageSquareText size={17} />}{loading ? jobStatus : 'Generate KT questions'}</button></div>;
-  return <div className="module-tab-content questions-layout"><section><div className="questions-intro"><div><span className="status-chip"><MessageSquareText size={13} />{questions.length} targeted questions</span><h2>Prepare a sharper knowledge-transfer session.</h2><p>{`Generated with ${result.generation_method} from ${result.signal_count} current signals.`}</p></div><button className="primary-button" onClick={copyAll}><Clipboard size={16} />Copy all questions</button></div><div className="question-list">{questions.map((q) => <article key={q.n}><span className="question-number">{q.n}</span><div><em>{q.tag}</em><h3>{q.title}</h3><p><Sparkles size={14} /><strong>Why ask:</strong> {q.why}</p></div><button onClick={() => { navigator.clipboard?.writeText(q.title); setToast('Question copied'); }}><Copy size={15} /></button></article>)}</div></section><aside className="signal-panel"><div className="panel-heading"><div><span className="eyebrow">Signals used</span><h2>Evidence mix</h2></div></div>{result.signals_used.slice(0, 6).map((signal, index) => <div className="signal-row" key={signal}><div><strong>{signal}</strong><span>Module signal</span></div><em>{Math.max(45, 90 - index * 8)}%</em><div><i style={{ width: `${Math.max(45, 90 - index * 8)}%` }} /></div></div>)}<div className="signal-foot"><ShieldCheck size={17} /><p>Questions mention only entities found in the indexed graph and vector metadata.</p></div></aside></div>;
+
+  if (!result) {
+    return (
+      <div className="module-tab-content generation-empty">
+        <div className="generation-icon"><MessageSquareText size={28} /></div>
+        <span className="status-chip"><Sparkles size={13} />Gap-grounded workflow</span>
+        <h2>Prepare a KT question set.</h2>
+        <p>Questions will be generated from undocumented functions, ownership concentration, missing documentation, architecture gaps, and dependency signals for <strong>{workspace.selectedModuleName || 'the selected module'}</strong>.</p>
+        {error && <div className="inline-notice error"><Info size={16} /><span>{error}</span></div>}
+        <button className="primary-button" onClick={generate} disabled={loading}>
+          {loading ? <Loader2 className="spin" size={17} /> : <MessageSquareText size={17} />}
+          {loading ? jobStatus : 'Generate KT questions'}
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="module-tab-content questions-layout">
+      <section>
+        <div className="questions-intro">
+          <div>
+            <span className="status-chip"><MessageSquareText size={13} />{questions.length} targeted questions</span>
+            <h2>Prepare a sharper knowledge-transfer session.</h2>
+            <p>{`Generated with ${result.generation_method} from ${result.signal_count} current signals.`}</p>
+          </div>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <button className="secondary-button" onClick={generate} disabled={loading} title="Regenerate questions">
+              <RefreshCw size={16} className={loading ? 'spin' : ''} />
+              Regenerate
+            </button>
+            <button className="primary-button" onClick={copyAll}>
+              <Clipboard size={16} />Copy all questions
+            </button>
+          </div>
+        </div>
+        {loading && (
+          <div className="inline-notice info" style={{ marginBottom: '16px' }}>
+            <Loader2 size={16} className="spin" />
+            <span>{jobStatus}</span>
+          </div>
+        )}
+        {error && (
+          <div className="inline-notice error" style={{ marginBottom: '16px' }}>
+            <Info size={16} />
+            <span>{error}</span>
+          </div>
+        )}
+        <div className="question-list">
+          {questions.map((q) => (
+            <article key={q.n}>
+              <span className="question-number">{q.n}</span>
+              <div>
+                <em>{q.tag}</em>
+                <h3>{q.title}</h3>
+                <p><Sparkles size={14} /><strong>Why ask:</strong> {q.why}</p>
+              </div>
+              <button onClick={() => { navigator.clipboard?.writeText(q.title); setToast('Question copied'); }}>
+                <Copy size={15} />
+              </button>
+            </article>
+          ))}
+        </div>
+      </section>
+      <aside className="signal-panel">
+        <div className="panel-heading">
+          <div><span className="eyebrow">Signals used</span><h2>Evidence mix</h2></div>
+        </div>
+        {result.signals_used.slice(0, 6).map((signal, index) => (
+          <div className="signal-row" key={signal}>
+            <div><strong>{signal}</strong><span>Module signal</span></div>
+            <em>{Math.max(45, 90 - index * 8)}%</em>
+            <div><i style={{ width: `${Math.max(45, 90 - index * 8)}%` }} /></div>
+          </div>
+        ))}
+        <div className="signal-foot">
+          <ShieldCheck size={17} />
+          <p>Questions mention only entities found in the indexed graph and vector metadata.</p>
+        </div>
+      </aside>
+    </div>
+  );
 }
+
 
 function MappingScreen({ workspace, setWorkspace, setToast }: { workspace: WorkspaceContext; setWorkspace: React.Dispatch<React.SetStateAction<WorkspaceContext>>; setToast: (message: string) => void }) {
   const [selectedId, setSelectedId] = useState(''); const [showUpload, setShowUpload] = useState(false); const [result, setResult] = useState<BusinessMappingResult | null>(null); const [loading, setLoading] = useState(false); const [jobStatus, setJobStatus] = useState(''); const [error, setError] = useState(''); const fileInput = useRef<HTMLInputElement>(null);

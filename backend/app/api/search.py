@@ -804,3 +804,161 @@ async def search_knowledge(
         results=paginated_results,
     )
 
+
+# ---------------------------------------------------------------------------
+# Answer Generation Models & Endpoint  (RAG: top-k context → LLM answer)
+# ---------------------------------------------------------------------------
+
+class AnswerRequest(BaseModel):
+    query: str = Field(..., min_length=1, max_length=2000, description="User question to answer")
+    organization_id: str = Field(..., min_length=1, description="Tenant organization ID")
+    context_items: List[SearchResultItem] = Field(
+        default_factory=list,
+        description="Top-K search results to use as grounding context (pass results from /search)",
+    )
+    top_k: int = Field(
+        5,
+        ge=1,
+        le=20,
+        description="How many context items to include in the LLM prompt (first N from context_items)",
+    )
+
+
+class CitedSource(BaseModel):
+    chunk_id: str = Field(..., description="Chunk ID of the source item")
+    result_type: str = Field(..., description="'code' or 'doc'")
+    file_path: str = Field("", description="File or document path")
+    snippet: str = Field("", description="First 300 chars of the source chunk text")
+    rerank_score: Optional[float] = Field(None, description="Reranker score of this source")
+    module_name: Optional[str] = Field(None, description="Module the source belongs to")
+    owners: List[str] = Field(default_factory=list, description="Owner emails of the source")
+
+
+class AnswerResponse(BaseModel):
+    query: str
+    organization_id: str
+    answer: str = Field(..., description="LLM-generated grounded answer")
+    sources: List[CitedSource] = Field(default_factory=list, description="Sources used to generate the answer")
+    context_items_used: int = Field(..., description="Number of context items fed to the LLM")
+    generation_ms: float = Field(..., description="LLM generation duration in milliseconds")
+
+
+def _build_rag_prompt(query: str, items: List[SearchResultItem]) -> str:
+    """Build a structured RAG prompt from the top-k search result items."""
+    lines = ["You are an expert software engineering assistant helping with codebase knowledge transfer."]
+    lines.append("Answer the user's question using ONLY the context excerpts provided below.")
+    lines.append("If the answer cannot be determined from the context, say so clearly.")
+    lines.append("Be concise, technically precise, and cite the relevant source by its [Chunk N] label.\n")
+    lines.append("=" * 60)
+    lines.append("CONTEXT EXCERPTS")
+    lines.append("=" * 60)
+
+    for idx, item in enumerate(items, start=1):
+        meta = item.metadata or {}
+        file_path = meta.get("file_path") or meta.get("relative_path", "")
+        chunk_type = meta.get("chunk_type", item.result_type)
+        func_name = meta.get("function_name", "")
+        heading = meta.get("heading_path", "")
+
+        label_parts = [f"[Chunk {idx}]", f"type={chunk_type}"]
+        if file_path:
+            label_parts.append(f"file={file_path}")
+        if func_name:
+            label_parts.append(f"function={func_name}")
+        if heading:
+            label_parts.append(f"section={heading}")
+        if item.graph_context and item.graph_context.module:
+            label_parts.append(f"module={item.graph_context.module.name}")
+        if item.rerank_score is not None:
+            label_parts.append(f"score={item.rerank_score:.3f}")
+
+        lines.append("  ".join(label_parts))
+        lines.append(item.text.strip())
+        lines.append("")
+
+    lines.append("=" * 60)
+    lines.append(f"USER QUESTION: {query}")
+    lines.append("=" * 60)
+    lines.append("\nANSWER (cite chunk numbers where relevant):")
+
+    return "\n".join(lines)
+
+
+@router.post("/answer", response_model=AnswerResponse)
+async def answer_question(request: AnswerRequest):
+    """
+    Generate a grounded answer for a question using top-K retrieved context chunks (RAG).
+
+    Workflow:
+    1. Slice request.context_items to top_k.
+    2. Build a structured RAG prompt with labelled context excerpts.
+    3. Call the provider-agnostic LLM client (stub / Gemini / Azure / Azure Foundry).
+    4. Return the answer with cited sources.
+
+    Usage pattern:
+      - First call GET /search to retrieve ranked context items.
+      - Pass the results directly into this endpoint as `context_items`.
+    """
+    from app.core.llm_client import generate_text, LLMClientError
+
+    t_start = time.perf_counter()
+
+    # Slice to top_k
+    items = request.context_items[: request.top_k]
+
+    if not items:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="context_items is empty. Run /search first and pass its results here.",
+        )
+
+    prompt = _build_rag_prompt(request.query, items)
+    system_instruction = (
+        "You are AutoKT, an AI assistant specialised in explaining codebases and software knowledge. "
+        "Provide accurate, concise answers grounded strictly in the provided context. "
+        "Always cite the [Chunk N] labels when referencing specific sources."
+    )
+
+    try:
+        answer_text = generate_text(prompt=prompt, system_instruction=system_instruction)
+    except LLMClientError as exc:
+        logger.error("LLM answer generation failed: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"LLM generation failed: {exc}",
+        )
+
+    generation_ms = round((time.perf_counter() - t_start) * 1000.0, 2)
+
+    # Build cited sources list
+    sources: List[CitedSource] = []
+    for item in items:
+        meta = item.metadata or {}
+        file_path = meta.get("file_path") or meta.get("relative_path", "")
+        module_name = None
+        owners: List[str] = []
+        if item.graph_context:
+            if item.graph_context.module:
+                module_name = item.graph_context.module.name
+            owners = [o.email for o in item.graph_context.owners if o.email]
+        sources.append(
+            CitedSource(
+                chunk_id=item.chunk_id,
+                result_type=item.result_type,
+                file_path=file_path,
+                snippet=item.text[:300].strip(),
+                rerank_score=item.rerank_score,
+                module_name=module_name,
+                owners=owners,
+            )
+        )
+
+    return AnswerResponse(
+        query=request.query,
+        organization_id=request.organization_id,
+        answer=answer_text,
+        sources=sources,
+        context_items_used=len(items),
+        generation_ms=generation_ms,
+    )
+

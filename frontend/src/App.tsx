@@ -2,19 +2,20 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity, ArrowDown, ArrowRight, ArrowUp, ArrowUpRight, BookOpen, Boxes, Braces,
   Check, CheckCircle2, ChevronDown, ChevronRight, CircleDot, Clipboard, CloudUpload,
-  Code2, Copy, Database, FileCode2, FileText, FolderGit2, Gauge, GitBranch, Github,
+  Code2, Copy, Database, FileCode2, FileText, FolderGit2, Gauge, GitBranch, GitCommit, Github,
   Info, Layers3, LayoutDashboard, Link2, Loader2, Menu, MessageSquareText,
   MoreHorizontal, Network, Plus, RefreshCw, Search, ShieldCheck, Sparkles, Upload,
   UserRound, UsersRound, WandSparkles, X, Zap,
 } from 'lucide-react';
 import {
-  API_BASE_URL, BusinessMappingResult, HealthModule, KTQuestionsResult, OnboardingResult,
-  RepoHealthResponse, RepoIngestionResult, RepositorySummary, SearchResultItem, checkBackend, getModuleHealth,
+  API_BASE_URL, AnswerResponse, BusinessMappingResult, HealthModule, KTQuestionsResult, OnboardingResult,
+  RepoHealthResponse, RepoIngestionResult, RepositorySummary, SearchResultItem, answerQuestion, checkBackend, getModuleHealth,
   getRepoHealth, ingestRepository, listRepositories, pollTask, searchKnowledge, startBusinessDocumentMapping,
   startKTQuestions, startOnboardingPack, uploadBusinessDocs, uploadTechnicalDocs,
 } from './api';
+import { GraphExplorer } from './components/GraphExplorer';
 
-type Screen = 'setup' | 'overview' | 'search' | 'module' | 'mapping';
+type Screen = 'setup' | 'overview' | 'search' | 'module' | 'mapping' | 'graph';
 type ModuleTab = 'health' | 'onboarding' | 'questions';
 type IngestState = 'idle' | 'running' | 'complete';
 
@@ -44,6 +45,7 @@ const navItems: Array<{ id: Screen; label: string; icon: typeof Search }> = [
   { id: 'search', label: 'Knowledge search', icon: Search },
   { id: 'module', label: 'Module intelligence', icon: Boxes },
   { id: 'mapping', label: 'Business mapping', icon: Network },
+  { id: 'graph', label: 'Knowledge graph', icon: GitBranch },
 ];
 
 interface MappingSectionView { id: string; title: string; status: string; count: number; confidence: number; chunk?: import('./api').BusinessMappingChunk }
@@ -226,6 +228,7 @@ function App() {
               availableModules={availableModules}
               loadingModules={loadingModules}
               onSelectModule={selectModule}
+              onNavigate={navigate}
               activeTab={moduleTab}
               setTab={setModuleTab}
               setToast={setToast}
@@ -236,6 +239,16 @@ function App() {
             />
           )}
           {screen === 'mapping' && <MappingScreen workspace={workspace} setWorkspace={setWorkspace} setToast={setToast} />}
+          {screen === 'graph' && (
+            <GraphScreen
+              workspace={workspace}
+              onNavigate={navigate}
+              onSelectModule={(mod) => {
+                selectModule(mod);
+                setModuleTab('health');
+              }}
+            />
+          )}
         </main>
       </div>
       {toast && <div className="toast"><CheckCircle2 size={18} />{toast}</div>}
@@ -479,7 +492,7 @@ function OverviewScreen({ workspace, onNavigate, onModule }: { workspace: Worksp
   const ingestion = workspace.ingestion;
 
   if (!workspace.repositoryId) return <div className="content-wrap"><PageHeader eyebrow="Repository intelligence" title="No repository connected." description="Ingest a repository to populate health scores, ownership signals, search, onboarding, and business mapping." actions={<button className="primary-button" onClick={() => onNavigate('setup')}><Plus size={16} />Ingest repository</button>} /><div className="generation-empty"><div className="generation-icon"><FolderGit2 size={28} /></div><h2>Connect your first source.</h2><p>All intelligence will appear after the backend finishes ingestion.</p></div></div>;
-  return <div className="content-wrap"><PageHeader eyebrow="Repository intelligence" title="Repository intelligence" description={`Current backend-derived knowledge for ${workspace.repositoryName}.`} actions={<><button className="secondary-button" onClick={refresh} disabled={loading}><RefreshCw size={16} className={loading ? 'spin' : ''} />Refresh</button><button className="primary-button" onClick={() => onNavigate('search')}><Search size={16} />Ask the codebase</button></>} />
+  return <div className="content-wrap"><PageHeader eyebrow="Repository intelligence" title="Repository intelligence" description={`Current backend-derived knowledge for ${workspace.repositoryName}.`} actions={<><button className="secondary-button" onClick={refresh} disabled={loading}><RefreshCw size={16} className={loading ? 'spin' : ''} />Refresh</button><button className="secondary-button" onClick={() => onNavigate('graph')}><GitBranch size={16} />Explore graph</button><button className="primary-button" onClick={() => onNavigate('search')}><Search size={16} />Ask the codebase</button></>} />
     {error && <div className="inline-notice warning"><Info size={16} /><span><strong>Live health data is unavailable.</strong> {error} Showing the retained workspace summary.</span></div>}
     <div className="hero-insight"><div className="hero-copy"><span className="status-chip"><Sparkles size={14} />Live knowledge pulse</span><h2>Your codebase is <em>{score}% transfer-ready.</em></h2><p>{liveModules.length ? `${liveModules.filter((module) => module.dimensions.sole_owner_risk || module.dimensions.unowned).length} modules have ownership risk. Health is calculated from real documentation coverage and graph-derived contributor signals.` : 'No health score has been returned by the backend for this repository.'}</p><button disabled={!firstModule} onClick={() => firstModule && onModule(firstModule)}>Review critical gaps <ArrowUpRight size={16} /></button></div><div className="score-orbit" style={{ '--score': score } as React.CSSProperties}><svg viewBox="0 0 160 160"><circle cx="80" cy="80" r="65" /><circle className="score-ring" cx="80" cy="80" r="65" /></svg><div><strong>{score}</strong><span>KT health</span><small>Live score</small></div></div></div>
     <div className="metric-grid"><MetricCard icon={Boxes} label="Modules mapped" value={String(health?.total_modules ?? ingestion?.modules_count ?? 0)} detail={`${rows.filter((row) => row.score < 60).length} need attention`} accent="ink" /><MetricCard icon={FileCode2} label="Code indexed" value={String(ingestion?.files_count ?? 0)} detail={`${ingestion?.code_chunks_count ?? 0} code chunks`} accent="green" /><MetricCard icon={BookOpen} label="Doc coverage" value={`${rows.length ? Math.round(rows.reduce((sum, row) => sum + row.docs, 0) / rows.length) : 0}%`} detail={`${ingestion?.docs_count ?? 0} documents found`} accent="blue" /><MetricCard icon={UsersRound} label="Contributors" value={String(ingestion?.authors_count ?? 0)} detail={`${rows.filter((row) => row.raw.dimensions.sole_owner_risk).length} sole-owner risks`} accent="orange" /></div>
@@ -494,34 +507,325 @@ function TimelineItem({ icon: Icon, tone, title, text, time }: { icon: typeof Se
 
 function SearchScreen({ workspace, setToast }: { workspace: WorkspaceContext; setToast: (message: string) => void }) {
   const [query, setQuery] = useState('');
-  const [searched, setSearched] = useState(true);
-  const [filter, setFilter] = useState('All sources');
-  const [expanded, setExpanded] = useState(0);
-  const [liveResponse, setLiveResponse] = useState<Awaited<ReturnType<typeof searchKnowledge>> | null>(null);
+  const [filter, setFilter] = useState<'all' | 'code' | 'doc'>('all');
+  const [loading, setLoading] = useState(false);
+  const [searched, setSearched] = useState(false);
   const [error, setError] = useState('');
-  const submit = async (event?: React.FormEvent, override?: string) => {
-    event?.preventDefault(); const nextQuery = override || query; if (!nextQuery.trim()) return;
-    setSearched(false); setError(''); setExpanded(0);
-    if (!workspace.organizationId) { setError('Ingest a repository before searching the knowledge layer.'); setSearched(true); return; }
-    try { setLiveResponse(await searchKnowledge(nextQuery, workspace.organizationId, filter === 'Code' ? 'code' : filter === 'Documents' ? 'doc' : 'all')); }
-    catch (reason) { setError(reason instanceof Error ? reason.message : 'Search failed.'); setLiveResponse(null); }
-    finally { setSearched(true); }
-  };
-  const liveResults = liveResponse?.results || [];
-  const selectedLive = liveResults[expanded];
-  return <div className="content-wrap search-page"><PageHeader eyebrow="Knowledge search" title="Ask across code and context." description="Semantic, keyword, and graph search—reranked into one evidence trail." actions={<button className="secondary-button"><Info size={16} />How results are ranked</button>} />
-    <section className="search-command"><form onSubmit={submit}><Search size={21} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Ask a question about the codebase…" /><kbd>⌘ K</kbd><button>Search <ArrowRight size={16} /></button></form><div className="quick-queries"><span>Try asking</span>{['Who owns database clients?', 'Where is tenant isolation?', 'Show onboarding flow'].map((q) => <button key={q} onClick={() => { setQuery(q); submit(undefined, q); }}>{q}</button>)}</div></section>
-    {error && <div className="inline-notice error"><Info size={16} /><span><strong>Search could not complete.</strong> {error}</span></div>}
-    <div className="results-toolbar"><div><strong>{liveResponse?.total_results ?? 0} results</strong><span>{query ? `for “${query}”` : 'No query submitted'}</span><em>{liveResponse ? `${Math.round(liveResponse.telemetry.total_ms)} ms` : '—'}</em></div><div>{['All sources', 'Code', 'Documents'].map((item) => <button className={filter === item ? 'active' : ''} onClick={() => setFilter(item)} key={item}>{item}</button>)}<button className="filter-button"><Layers3 size={15} />More filters</button></div></div>
-    <div className="search-layout"><section className={`results-list ${!searched ? 'loading' : ''}`}>{!searched ? <div className="search-loading"><Loader2 size={26} className="spin" /><strong>Tracing through your knowledge graph…</strong></div> : liveResponse ? (liveResults.length ? liveResults.map((result, index) => <LiveSearchCard key={result.chunk_id} result={result} expanded={expanded === index} onOpen={() => setExpanded(index)} setToast={setToast} />) : <div className="empty-state"><Search size={24} /><strong>No matching knowledge found</strong><span>Try a broader phrase or switch the source filter.</span></div>) : <div className="empty-state"><Search size={24} /><strong>Search the knowledge layer</strong><span>Enter a question to query backend-indexed code, documents, and graph context.</span></div>}</section>
-      <aside className="context-panel"><div className="context-heading"><div className="context-icon"><Network size={18} /></div><div><span>Graph context</span><strong>{selectedLive ? String(selectedLive.metadata.function_name || selectedLive.metadata.heading_path || selectedLive.metadata.file_path || selectedLive.chunk_id) : 'No result selected'}</strong></div></div><div className="context-block"><label>Repository</label><div className="context-line"><FolderGit2 size={16} /><span><strong>{selectedLive?.graph_context?.repository?.name || workspace.repositoryName || 'No repository'}</strong><small>{workspace.repositoryId || 'Not configured'}</small></span></div></div><div className="context-block"><label>Module</label><div className="context-line"><Boxes size={16} /><span><strong>{selectedLive?.graph_context?.module?.name || workspace.selectedModuleName || 'Repository scope'}</strong><small>{selectedLive?.graph_context?.module?.path || workspace.selectedModulePath}</small></span></div></div><div className="context-block"><label>Primary owner</label><div className="owner-line"><div className="avatar small">{selectedLive?.graph_context?.owners?.[0]?.name ? selectedLive.graph_context.owners[0].name.split(' ').map((part) => part[0]).join('').slice(0, 2) : '—'}</div><span><strong>{selectedLive?.graph_context?.owners?.[0]?.name || 'Available after search'}</strong><small>{selectedLive?.graph_context?.owners?.[0] ? `${selectedLive.graph_context.owners[0].commit_count} commits` : 'Graph-derived ownership'}</small></span></div></div><div className="context-block"><label>Related knowledge</label>{selectedLive ? [...(selectedLive.graph_context?.related_documents || []).map((item) => item.filename), ...(selectedLive.graph_context?.related_code_files || []).map((item) => item.filename)].slice(0, 3).map((item) => <button className="related-link" key={item}><FileText size={15} /><span>{item}</span><ArrowUpRight size={14} /></button>) : <span className="context-placeholder">Run a search to expand related evidence.</span>}</div><div className="grounded-note"><ShieldCheck size={17} /><span><strong>Grounded result</strong><small>Backed by code, graph, and document evidence.</small></span></div></aside></div>
-  </div>;
-}
+  const [answerResult, setAnswerResult] = useState<AnswerResponse | null>(null);
+  const [selectedSourceIdx, setSelectedSourceIdx] = useState(0);
+  const [expandedSnippet, setExpandedSnippet] = useState<number | null>(null);
 
-function LiveSearchCard({ result, expanded, onOpen, setToast }: { result: SearchResultItem; expanded: boolean; onOpen: () => void; setToast: (message: string) => void }) {
-  const meta = result.metadata; const isCode = result.result_type === 'code'; const path = String(meta.file_path || meta.relative_path || 'Indexed knowledge'); const title = String(meta.function_name || meta.class_name || meta.heading_path || path.split('/').pop() || result.chunk_id); const lineLabel = isCode && meta.start_line ? `Lines ${meta.start_line}–${meta.end_line}` : String(meta.file_format || meta.chunk_type || 'Document'); const score = result.rerank_score ?? result.rrf_score;
-  const tags = [String(meta.language || meta.file_format || result.result_type), String(meta.chunk_type || ''), String(result.graph_context?.module?.name || '')].filter(Boolean);
-  return <article className={`result-card ${expanded ? 'expanded' : ''}`} onClick={onOpen}><div className="result-top"><div className={`result-type ${result.result_type}`}><span>{isCode ? <Code2 size={15} /> : <FileText size={15} />}{isCode ? 'Code evidence' : 'Document evidence'}</span></div><div className="result-score"><Sparkles size={13} />Relevance <strong>{score.toFixed(2)}</strong></div></div><h3>{title}</h3><div className="result-path">{path}<span>{lineLabel}</span></div><p>{result.text}</p>{expanded && <div className="code-preview"><div><span /><span /><span /><em>{path}</em></div><pre><code>{result.text}</code></pre></div>}<footer><div>{tags.map((tag) => <span key={tag}>{tag}</span>)}</div><button onClick={(event) => { event.stopPropagation(); navigator.clipboard?.writeText(`${path}\n${result.text}`); setToast('Evidence copied'); }}><Link2 size={14} />Copy evidence</button></footer></article>;
+  const executeAsk = async (event?: React.FormEvent, overrideQuery?: string) => {
+    event?.preventDefault();
+    const q = (overrideQuery || query).trim();
+    if (!q) return;
+    if (overrideQuery) setQuery(overrideQuery);
+
+    setLoading(true);
+    setSearched(true);
+    setError('');
+    setAnswerResult(null);
+    setSelectedSourceIdx(0);
+    setExpandedSnippet(null);
+
+    if (!workspace.organizationId) {
+      setError('Please ingest a repository first before asking questions.');
+      setLoading(false);
+      return;
+    }
+
+    try {
+      // 1. Retrieve top-k context via hybrid search
+      const searchRes = await searchKnowledge(q, workspace.organizationId, filter);
+      if (!searchRes.results || searchRes.results.length === 0) {
+        setError('No relevant codebase or document evidence found for this query.');
+        setLoading(false);
+        return;
+      }
+
+      // 2. Synthesize direct grounded answer using top-5 chunks
+      const answerRes = await answerQuestion(q, workspace.organizationId, searchRes.results, 5);
+      setAnswerResult(answerRes);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to generate direct answer.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const selectedSource = answerResult?.sources?.[selectedSourceIdx];
+
+  return (
+    <div className="content-wrap search-page">
+      <PageHeader
+        eyebrow="Knowledge Transfer Assistant"
+        title="Direct Codebase Answers."
+        description="Ask any question about your codebase and get a direct, AI-synthesised answer grounded in code, documentation, and the knowledge graph."
+        actions={
+          <div className="topbar-actions">
+            <span className="api-pill">
+              <i />RAG Answer Engine Active
+            </span>
+          </div>
+        }
+      />
+
+      <section className="search-command">
+        <form onSubmit={executeAsk}>
+          <Search size={21} />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Ask anything about architecture, modules, owners, or implementation details…"
+          />
+          <kbd>↵ Enter</kbd>
+          <button type="submit" disabled={loading || !query.trim()}>
+            {loading ? <Loader2 size={16} className="spin" /> : <Sparkles size={16} />}
+            {loading ? 'Synthesising…' : 'Ask AI'}
+          </button>
+        </form>
+        <div className="quick-queries">
+          <span>Try asking</span>
+          {[
+            'Who owns database clients?',
+            'Where is tenant isolation enforced?',
+            'How does authentication and token verification work?',
+            'Explain the repository ingestion pipeline',
+          ].map((q) => (
+            <button key={q} onClick={() => executeAsk(undefined, q)}>
+              {q}
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <div className="results-toolbar">
+        <div>
+          <strong>Direct AI Mode</strong>
+          <span>{query ? `Question: "${query}"` : 'Awaiting question'}</span>
+          {answerResult && <em>{Math.round(answerResult.generation_ms)} ms</em>}
+        </div>
+        <div>
+          {(['all', 'code', 'doc'] as const).map((f) => (
+            <button
+              key={f}
+              className={filter === f ? 'active' : ''}
+              onClick={() => setFilter(f)}
+            >
+              {f === 'all' ? 'All sources' : f === 'code' ? 'Code only' : 'Docs only'}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {error && (
+        <div className="inline-notice error">
+          <Info size={16} />
+          <span><strong>Could not answer question:</strong> {error}</span>
+        </div>
+      )}
+
+      <div className="search-layout">
+        <section className="direct-answer-container">
+          {loading && (
+            <div className="answer-loading-hero">
+              <Loader2 size={36} className="spin" style={{ color: '#44833f' }} />
+              <div>
+                <strong>Searching knowledge graph & synthesising direct answer…</strong>
+                <p>Retrieving top code chunks, checking ownership nodes, and grounding LLM response.</p>
+              </div>
+            </div>
+          )}
+
+          {!loading && answerResult && (
+            <div className="direct-answer-card">
+              <div className="direct-answer-card-header">
+                <div className="direct-answer-badge">
+                  <div className="direct-answer-badge-icon">
+                    <Sparkles size={18} />
+                  </div>
+                  <div className="direct-answer-badge-info">
+                    <strong>AutoKT Direct Answer</strong>
+                    <span>
+                      Grounded in {answerResult.context_items_used} top sources · Generated in {Math.round(answerResult.generation_ms)} ms
+                    </span>
+                  </div>
+                </div>
+                <div className="direct-answer-actions">
+                  <button
+                    className="secondary-button compact"
+                    onClick={() => {
+                      navigator.clipboard?.writeText(answerResult.answer);
+                      setToast('Answer copied to clipboard');
+                    }}
+                  >
+                    <Copy size={13} /> Copy Answer
+                  </button>
+                  <button
+                    className="secondary-button compact"
+                    onClick={() => executeAsk(undefined, query)}
+                  >
+                    <RefreshCw size={13} /> Regenerate
+                  </button>
+                </div>
+              </div>
+
+              <div className="direct-answer-body">
+                {answerResult.answer.split('\n').map((para, i) => {
+                  if (!para.trim()) return null;
+                  return <p key={i}>{para}</p>;
+                })}
+              </div>
+
+              {answerResult.sources && answerResult.sources.length > 0 && (
+                <div className="direct-answer-sources-section">
+                  <div className="sources-section-head">
+                    <strong>
+                      <ShieldCheck size={14} style={{ color: '#44833f' }} />
+                      Grounding Evidence & Cited Sources ({answerResult.sources.length})
+                    </strong>
+                    <span style={{ fontSize: '10px', color: '#7c8882' }}>Click source to inspect details</span>
+                  </div>
+
+                  <div className="sources-grid">
+                    {answerResult.sources.map((src, idx) => {
+                      const isSelected = selectedSourceIdx === idx;
+                      const isSnippetExpanded = expandedSnippet === idx;
+                      const isCode = src.result_type === 'code';
+                      const fileName = src.file_path ? src.file_path.split('/').pop() : src.chunk_id;
+
+                      return (
+                        <div
+                          key={src.chunk_id || idx}
+                          className={`source-evidence-card ${isSelected ? 'active' : ''}`}
+                          onClick={() => setSelectedSourceIdx(idx)}
+                        >
+                          <div className="source-card-top">
+                            <span className={`source-chunk-tag ${isCode ? 'code' : 'doc'}`}>
+                              {isCode ? <Code2 size={12} /> : <FileText size={12} />}
+                              [{idx + 1}] {isCode ? 'Code Evidence' : 'Doc Evidence'}
+                            </span>
+                            {src.rerank_score !== undefined && src.rerank_score !== null && (
+                              <span className="source-card-score">
+                                {Math.round(src.rerank_score * 100)}% Match
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="source-card-path" title={src.file_path}>
+                            {src.file_path || fileName}
+                          </div>
+
+                          {src.snippet && (
+                            <div
+                              className="source-card-snippet"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setExpandedSnippet(isSnippetExpanded ? null : idx);
+                                setSelectedSourceIdx(idx);
+                              }}
+                              title="Click to toggle full excerpt"
+                              style={{ maxHeight: isSnippetExpanded ? '200px' : '75px', overflowY: isSnippetExpanded ? 'auto' : 'hidden' }}
+                            >
+                              {src.snippet}
+                            </div>
+                          )}
+
+                          <div className="source-card-footer">
+                            <span>
+                              <Boxes size={11} /> {src.module_name || workspace.selectedModuleName || 'Global Scope'}
+                            </span>
+                            {src.owners && src.owners.length > 0 && (
+                              <span>
+                                <GitCommit size={11} /> {src.owners[0].split('@')[0]}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {!loading && !answerResult && !searched && (
+            <div className="empty-state surface" style={{ padding: '48px 24px' }}>
+              <div className="generation-icon" style={{ margin: '0 auto 16px' }}>
+                <Sparkles size={28} />
+              </div>
+              <strong style={{ fontSize: '15px' }}>Ask Any Question About the Codebase</strong>
+              <span style={{ maxWidth: '480px', lineHeight: '1.6', marginTop: '6px' }}>
+                AutoKT will retrieve relevant code files, documentation, and knowledge graph links to synthesize an accurate direct answer.
+              </span>
+            </div>
+          )}
+        </section>
+
+        <aside className="context-panel">
+          <div className="context-heading">
+            <div className="context-icon">
+              <Network size={18} />
+            </div>
+            <div>
+              <span>Graph Context</span>
+              <strong>
+                {selectedSource
+                  ? (selectedSource.file_path ? selectedSource.file_path.split('/').pop() : selectedSource.chunk_id)
+                  : 'No source selected'}
+              </strong>
+            </div>
+          </div>
+
+          <div className="context-block">
+            <label>Repository</label>
+            <div className="context-line">
+              <FolderGit2 size={16} />
+              <span>
+                <strong>{workspace.repositoryName || 'No repository'}</strong>
+                <small>{workspace.repositoryId || 'Not configured'}</small>
+              </span>
+            </div>
+          </div>
+
+          <div className="context-block">
+            <label>Identified Module</label>
+            <div className="context-line">
+              <Boxes size={16} />
+              <span>
+                <strong>{selectedSource?.module_name || workspace.selectedModuleName || 'Repository Scope'}</strong>
+                <small>{workspace.selectedModulePath || 'root'}</small>
+              </span>
+            </div>
+          </div>
+
+          <div className="context-block">
+            <label>Primary Owner</label>
+            <div className="owner-line">
+              <div className="avatar small">
+                {selectedSource?.owners?.[0]
+                  ? selectedSource.owners[0].slice(0, 2).toUpperCase()
+                  : 'KT'}
+              </div>
+              <span>
+                <strong>{selectedSource?.owners?.[0] || 'Graph-derived ownership'}</strong>
+                <small>{selectedSource?.owners?.length ? 'Code contributor' : 'Available in graph'}</small>
+              </span>
+            </div>
+          </div>
+
+          <div className="grounded-note">
+            <ShieldCheck size={17} />
+            <span>
+              <strong>Grounded AI Synthesis</strong>
+              <small>Synthesised strictly from indexed repository sources and git relationships.</small>
+            </span>
+          </div>
+        </aside>
+      </div>
+    </div>
+  );
 }
 
 function ModuleScreen({
@@ -536,11 +840,13 @@ function ModuleScreen({
   setOnboardingPacks,
   ktQuestionsMap,
   setKtQuestionsMap,
+  onNavigate,
 }: {
   workspace: WorkspaceContext;
   availableModules: HealthModule[];
   loadingModules: boolean;
   onSelectModule: (module: HealthModule) => void;
+  onNavigate?: (screen: Screen) => void;
   activeTab: ModuleTab;
   setTab: (tab: ModuleTab) => void;
   setToast: (message: string) => void;
@@ -619,6 +925,12 @@ function ModuleScreen({
             <RefreshCw size={16} className={loading ? 'spin' : ''} />
             Refresh analysis
           </button>
+          {onNavigate && (
+            <button className="secondary-button" onClick={() => onNavigate('graph')}>
+              <GitBranch size={16} />
+              Explore in graph
+            </button>
+          )}
           <button className="icon-button"><MoreHorizontal size={18} /></button>
         </div>
       </div>
@@ -1186,4 +1498,47 @@ function MappingScreen({ workspace, setWorkspace, setToast }: { workspace: Works
 
 function CodeMatch({ rank, file, fn, lines, score, confidence, text }: { rank: string; file: string; fn: string; lines: string; score: string; confidence: string; text: string }) { return <article className="code-match"><span className="match-rank">{rank}</span><div className="match-main"><div className="match-path"><FileCode2 size={16} /><span>{file}</span><em>{lines}</em></div><h3>{fn}<span>()</span></h3><p>{text}</p><div className="reasoning"><Sparkles size={14} /><span><strong>Why it matches</strong>This function directly implements the retrieval and ranking behavior described by the requirement.</span></div></div><div className="match-score"><span>{confidence}</span><strong>{score}</strong><small>rerank score</small><button><ArrowUpRight size={15} /></button></div></article>; }
 
+function GraphScreen({
+  workspace,
+  onNavigate,
+  onSelectModule,
+}: {
+  workspace: WorkspaceContext;
+  onNavigate: (screen: Screen) => void;
+  onSelectModule: (module: HealthModule) => void;
+}) {
+  return (
+    <div className="content-wrap graph-page" style={{ maxWidth: '100%', padding: '24px 32px 48px' }}>
+      <PageHeader
+        eyebrow="Architecture topology"
+        title="Explore code connections in real time."
+        description={`Interactive multi-tenant knowledge graph mapped directly from Neo4j for ${workspace.repositoryName || 'your repository'}. Drag, zoom, and inspect architecture nodes.`}
+        actions={
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button className="secondary-button" onClick={() => onNavigate('overview')}>
+              Overview
+            </button>
+            <button className="secondary-button" onClick={() => onNavigate('module')}>
+              Module intelligence
+            </button>
+          </div>
+        }
+      />
+      <GraphExplorer
+        repositoryId={workspace.repositoryId}
+        organizationId={workspace.organizationId}
+        selectedModuleId={workspace.selectedModuleId}
+        onSelectModule={(modId, modName) => {
+          onSelectModule({ module_id: modId, module_name: modName } as HealthModule);
+          onNavigate('module');
+        }}
+        onNavigateToSearch={(query) => {
+          onNavigate('search');
+        }}
+      />
+    </div>
+  );
+}
+
 export default App;
+

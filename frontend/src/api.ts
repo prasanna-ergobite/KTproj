@@ -267,3 +267,130 @@ export function startKTQuestions(moduleId: string, organizationId: string) {
 export function startBusinessDocumentMapping(organizationId: string, repositoryId: string, documentId: string) {
   return request<TaskStatus>('/business-mapping/document', { method: 'POST', body: JSON.stringify({ organization_id: organizationId, repository_id: repositoryId, document_id: documentId, use_llm_judge: true, max_mappings_per_chunk: 3 }) });
 }
+
+// ---------------------------------------------------------------------------
+// Answer Generation (RAG)
+// ---------------------------------------------------------------------------
+
+export interface CitedSource {
+  chunk_id: string;
+  result_type: 'code' | 'doc';
+  file_path: string;
+  snippet: string;
+  rerank_score?: number | null;
+  module_name?: string | null;
+  owners: string[];
+}
+
+export interface AnswerResponse {
+  query: string;
+  organization_id: string;
+  answer: string;
+  sources: CitedSource[];
+  context_items_used: number;
+  generation_ms: number;
+}
+
+export function answerQuestion(
+  query: string,
+  organizationId: string,
+  contextItems: SearchResultItem[],
+  topK = 5,
+): Promise<AnswerResponse> {
+  return request<AnswerResponse>('/search/answer', {
+    method: 'POST',
+    body: JSON.stringify({
+      query,
+      organization_id: organizationId,
+      context_items: contextItems,
+      top_k: topK,
+    }),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Knowledge Graph Explorer API
+// ---------------------------------------------------------------------------
+
+export interface GraphNode {
+  id: string;
+  label: 'Repository' | 'Module' | 'File' | 'Function' | 'Class' | 'Person' | 'Document' | 'Package' | string;
+  name: string;
+  path?: string;
+  val: number;
+  color: string;
+  badge?: string;
+  properties?: Record<string, any>;
+  x?: number;
+  y?: number;
+  vx?: number;
+  vy?: number;
+  fx?: number;
+  fy?: number;
+}
+
+export interface GraphLink {
+  source: string | GraphNode;
+  target: string | GraphNode;
+  type: string;
+  label: string;
+  properties?: Record<string, any>;
+}
+
+export interface GraphTopologyResponse {
+  nodes: GraphNode[];
+  links: GraphLink[];
+  node_count: number;
+  link_count: number;
+  repository_id?: string;
+  module_id?: string;
+}
+
+export interface GraphSearchItem {
+  id: string;
+  label: string;
+  name: string;
+  path?: string;
+  badge?: string;
+  color: string;
+}
+
+export interface GraphSearchResponse {
+  results: GraphSearchItem[];
+  total: number;
+}
+
+export function fetchGraphTopology(params: {
+  repositoryId?: string;
+  organizationId?: string;
+  moduleId?: string;
+  includeFunctions?: boolean;
+  limit?: number;
+}): Promise<GraphTopologyResponse> {
+  const searchParams = new URLSearchParams();
+  if (params.repositoryId) searchParams.set('repository_id', params.repositoryId);
+  if (params.organizationId) searchParams.set('organization_id', params.organizationId);
+  if (params.moduleId) searchParams.set('module_id', params.moduleId);
+  if (params.includeFunctions !== undefined) searchParams.set('include_functions', String(params.includeFunctions));
+  if (params.limit) searchParams.set('limit', String(params.limit));
+
+  const qs = searchParams.toString();
+  return request<GraphTopologyResponse>(`/graph/topology${qs ? `?${qs}` : ''}`);
+}
+
+export function expandGraphNode(nodeId: string, organizationId?: string, limit = 35): Promise<GraphTopologyResponse> {
+  const searchParams = new URLSearchParams({ node_id: nodeId });
+  if (organizationId) searchParams.set('organization_id', organizationId);
+  if (limit) searchParams.set('limit', String(limit));
+
+  return request<GraphTopologyResponse>(`/graph/node/neighbors?${searchParams.toString()}`);
+}
+
+export function searchGraphNodes(query: string, organizationId?: string, limit = 15): Promise<GraphSearchResponse> {
+  const searchParams = new URLSearchParams({ query });
+  if (organizationId) searchParams.set('organization_id', organizationId);
+  if (limit) searchParams.set('limit', String(limit));
+
+  return request<GraphSearchResponse>(`/graph/search?${searchParams.toString()}`);
+}
+

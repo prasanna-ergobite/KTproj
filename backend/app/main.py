@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 import logging
 
-from app.api import repos, docs, business_docs, search, health_score, onboarding, kt_prep_questions, business_mapping
+from app.api import repos, docs, business_docs, search, health_score, onboarding, kt_prep_questions, business_mapping, graph
 from app.db.neo4j_client import neo4j_client
 from app.db.chroma_client import chroma_client
 
@@ -85,6 +85,7 @@ app.include_router(health_score.router)
 app.include_router(onboarding.router)
 app.include_router(kt_prep_questions.router)
 app.include_router(business_mapping.router)
+app.include_router(graph.router)
 
 
 def custom_openapi():

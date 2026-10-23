@@ -19,7 +19,7 @@ services:
       dockerfile: Dockerfile
     container_name: autokt-backend
     restart: unless-stopped
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    command: sh -c "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/app"
     ports:
       - "8000:8000"
     volumes:

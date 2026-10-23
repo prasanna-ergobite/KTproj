@@ -42,6 +42,264 @@ export interface RepositoryListResponse {
   total: number;
 }
 
+export interface ReverseEngineeringFile {
+  path: string;
+  size_bytes: number;
+  extension: string;
+  category: string;
+  language?: string | null;
+  sha256: string;
+}
+
+export interface ReverseEngineeringInventory {
+  repository_root: string;
+  total_files: number;
+  included_files: number;
+  excluded_files: number;
+  total_bytes: number;
+  included_bytes: number;
+  languages: Record<string, number>;
+  categories: Record<string, number>;
+  manifests: string[];
+  frameworks: string[];
+  limitations: string[];
+}
+
+export interface ReverseEngineeringCoverage {
+  status: 'complete' | 'partial';
+  eligible_files: number;
+  parsed_files: number;
+  unsupported_files: number;
+  failed_files: number;
+  coverage_percent: number;
+  unsupported: Array<{ path: string; reason: string }>;
+  failures: Array<{ path: string; reason: string }>;
+  inventory_limitations: string[];
+  methods: Record<string, string>;
+}
+
+export interface ReverseEngineeringComponent {
+  id: string;
+  name: string;
+  file_count: number;
+  languages: Record<string, number>;
+  symbol_count: number;
+  route_count: number;
+  model_count: number;
+}
+
+export interface ReverseEngineeringAnalysis {
+  summary: {
+    components: number;
+    symbols: number;
+    routes: number;
+    models: number;
+    dependencies: number;
+    config_keys: number;
+    behavior_records?: number;
+  };
+  coverage: ReverseEngineeringCoverage;
+  architecture: {
+    style: string;
+    components: ReverseEngineeringComponent[];
+    interactions: Array<{ source: string; target: string; type: string; evidence_count: number }>;
+    entry_points: Array<Record<string, unknown>>;
+  };
+  uncertainties: string[];
+}
+
+export interface ReverseEngineeringDocument {
+  id: string;
+  title: string;
+  generation_status: 'completed' | 'failed';
+  verification_status: 'pending' | 'checks_passed' | 'needs_review' | 'verification_incomplete';
+  version: number;
+  generation_method: 'deterministic' | 'hybrid';
+  artifact_ref?: string | null;
+  word_count: number;
+  error?: string | null;
+}
+
+export interface ReverseEngineeringDocumentPreview {
+  task_id: string;
+  document: ReverseEngineeringDocument;
+  markdown: string;
+}
+
+export interface ReverseEngineeringCoverageMetric {
+  detected: number;
+  documented: number;
+  ratio: number | null;
+  status: 'complete' | 'incomplete' | 'not_applicable';
+}
+
+export interface ReverseEngineeringContractMetric {
+  expected: number;
+  matched: number;
+  status: 'complete' | 'mismatch';
+  unexpected?: number;
+}
+
+export interface ReverseEngineeringFinding {
+  id: string;
+  code: string;
+  severity: 'critical' | 'high' | 'medium' | 'low';
+  document_id?: string | null;
+  message: string;
+  evidence_ids: string[];
+  fixable: boolean;
+  status: 'open' | 'resolved';
+}
+
+export interface ReverseEngineeringVerification {
+  status: 'checks_passed' | 'needs_review' | 'verification_incomplete';
+  scope: string;
+  completed_at: string;
+  correction_rounds: number;
+  correction_history: Array<{
+    round: number;
+    documents: string[];
+    triggering_findings: Array<{ code: string; severity: string; document_id?: string | null; message: string }>;
+  }>;
+  corrected_documents: string[];
+  claim_verdicts: Record<string, number>;
+  coverage: Record<string, ReverseEngineeringCoverageMetric>;
+  contract_checks: Record<string, ReverseEngineeringContractMetric>;
+  findings_by_severity: Record<string, number>;
+  open_findings: number;
+  limitations: string[];
+}
+
+export interface ReverseEngineeringVerificationResponse {
+  task_id: string;
+  report: ReverseEngineeringVerification & { documents: ReverseEngineeringDocument[] };
+  findings: ReverseEngineeringFinding[];
+}
+
+export interface ReverseEngineeringAcceptanceCheck {
+  id: string;
+  title: string;
+  status: 'pass' | 'review' | 'fail';
+  required: boolean;
+  message: string;
+  evidence: Record<string, unknown>;
+}
+
+export interface ReverseEngineeringAcceptance {
+  status: 'ready' | 'needs_review' | 'not_ready';
+  generated_at: string;
+  commit_sha: string;
+  summary: {
+    total_checks: number;
+    passed: number;
+    review: number;
+    failed: number;
+    score_percent: number;
+  };
+  checks: ReverseEngineeringAcceptanceCheck[];
+  measured_stage_durations_ms: Record<string, number>;
+  recommendations: string[];
+  limitations: string[];
+}
+
+export interface ReverseEngineeringAcceptanceResponse {
+  task_id: string;
+  report: ReverseEngineeringAcceptance;
+}
+
+export interface ReverseEngineeringBundle {
+  artifact_ref?: string | null;
+  filename?: string;
+  size_bytes?: number;
+  sha256?: string;
+  included_files?: string[];
+  error?: string;
+}
+
+export interface ReverseEngineeringRecentRun {
+  task_id: string;
+  status: string;
+  repo_url?: string | null;
+  repository_name?: string | null;
+  requested_ref?: string | null;
+  commit_sha?: string | null;
+  verification_status?: string | null;
+  acceptance_status?: string | null;
+  documents_completed: number;
+  documents_total: number;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface ReverseEngineeringRecentRunsResponse {
+  organization_id: string;
+  runs: ReverseEngineeringRecentRun[];
+}
+
+export interface ReverseEngineeringRoute {
+  id: string;
+  framework: string;
+  confidence: string;
+  method: string;
+  path?: string | null;
+  handler?: string | null;
+  file: string;
+  line: number;
+  evidence_id: string;
+}
+
+export interface ReverseEngineeringModel {
+  id: string;
+  name: string;
+  qualified_name: string;
+  model_kind: string;
+  table_name?: string | null;
+  fields: Array<{ name: string; type?: string | null; required?: boolean | null; default?: string | null }>;
+  file: string;
+  line: number;
+  evidence_id: string;
+}
+
+export interface ReverseEngineeringResult extends JsonRecord {
+  run_id: string;
+  organization_id: string;
+  repo_url: string;
+  repository_name?: string;
+  requested_ref?: string | null;
+  resolved_ref?: string;
+  commit_sha?: string;
+  stage: string;
+  inventory?: ReverseEngineeringInventory;
+  analysis?: ReverseEngineeringAnalysis;
+  files_preview?: ReverseEngineeringFile[];
+  exclusions_preview?: Array<{ path: string; reason: string; size_bytes?: number }>;
+  routes_preview?: ReverseEngineeringRoute[];
+  models_preview?: ReverseEngineeringModel[];
+  dependencies_preview?: Array<{ name: string; version?: string | null; scope: string; source: string }>;
+  documents?: ReverseEngineeringDocument[];
+  generation?: { method: string; provider: string; model?: string | null; warnings: string[] };
+  claims_count?: number;
+  verification?: ReverseEngineeringVerification;
+  acceptance?: ReverseEngineeringAcceptance;
+  findings_preview?: ReverseEngineeringFinding[];
+  bundle?: ReverseEngineeringBundle;
+  artifact_refs?: {
+    inventory: string;
+    extracted_facts?: string;
+    structural_analysis?: string;
+    repository_analysis?: string;
+    evidence?: string;
+    claims?: string;
+    findings?: string;
+    verification_report?: string;
+    acceptance_report?: string;
+    bundle?: string;
+    manifest?: string;
+  };
+  completed_at?: string;
+  error?: string;
+}
+
 export function listRepositories(organizationId?: string): Promise<RepositoryListResponse> {
   const query = organizationId ? `?organization_id=${encodeURIComponent(organizationId)}` : '';
   return request<RepositoryListResponse>(`/repos${query}`);
@@ -198,6 +456,83 @@ export async function checkBackend(): Promise<boolean> {
 
 export function ingestRepository(repoUrl: string, organizationId: string, branch: string) {
   return request<TaskStatus>('/repos', { method: 'POST', body: JSON.stringify({ repo_url: repoUrl, organization_id: organizationId, branch }) });
+}
+
+export function startReverseEngineering(repoUrl: string, organizationId: string, ref?: string) {
+  return request<TaskStatus<ReverseEngineeringResult>>('/reverse-engineering', {
+    method: 'POST',
+    body: JSON.stringify({ repo_url: repoUrl, organization_id: organizationId, ref: ref || null }),
+  });
+}
+
+export function getReverseEngineeringTask(taskId: string, organizationId: string, signal?: AbortSignal) {
+  const params = new URLSearchParams({ organization_id: organizationId });
+  return request<TaskStatus<ReverseEngineeringResult>>(
+    `/reverse-engineering/tasks/${encodeURIComponent(taskId)}?${params.toString()}`,
+    { signal },
+  );
+}
+
+export function getReverseEngineeringDocument(taskId: string, documentId: string, organizationId: string) {
+  const params = new URLSearchParams({ organization_id: organizationId });
+  return request<ReverseEngineeringDocumentPreview>(
+    `/reverse-engineering/tasks/${encodeURIComponent(taskId)}/documents/${encodeURIComponent(documentId)}?${params.toString()}`,
+  );
+}
+
+export function getReverseEngineeringDocumentDownloadUrl(taskId: string, documentId: string, organizationId: string) {
+  const params = new URLSearchParams({ organization_id: organizationId });
+  return `${API_BASE_URL}/reverse-engineering/tasks/${encodeURIComponent(taskId)}/documents/${encodeURIComponent(documentId)}/download?${params.toString()}`;
+}
+
+export function getReverseEngineeringBundleDownloadUrl(taskId: string, organizationId: string) {
+  const params = new URLSearchParams({ organization_id: organizationId });
+  return `${API_BASE_URL}/reverse-engineering/tasks/${encodeURIComponent(taskId)}/download?${params.toString()}`;
+}
+
+export function listReverseEngineeringRuns(organizationId: string, limit = 10) {
+  const params = new URLSearchParams({ organization_id: organizationId, limit: String(limit) });
+  return request<ReverseEngineeringRecentRunsResponse>(`/reverse-engineering/tasks?${params.toString()}`);
+}
+
+export function getReverseEngineeringVerification(taskId: string, organizationId: string) {
+  const params = new URLSearchParams({ organization_id: organizationId });
+  return request<ReverseEngineeringVerificationResponse>(
+    `/reverse-engineering/tasks/${encodeURIComponent(taskId)}/verification?${params.toString()}`,
+  );
+}
+
+export function getReverseEngineeringAcceptance(taskId: string, organizationId: string) {
+  const params = new URLSearchParams({ organization_id: organizationId });
+  return request<ReverseEngineeringAcceptanceResponse>(
+    `/reverse-engineering/tasks/${encodeURIComponent(taskId)}/acceptance?${params.toString()}`,
+  );
+}
+
+export async function pollReverseEngineeringTask(
+  taskId: string,
+  organizationId: string,
+  onUpdate?: (task: TaskStatus<ReverseEngineeringResult>) => void,
+  signal?: AbortSignal,
+): Promise<TaskStatus<ReverseEngineeringResult>> {
+  const terminal = new Set(['completed', 'failed']);
+  for (let attempt = 0; attempt < 600; attempt += 1) {
+    if (signal?.aborted) throw new DOMException('Polling cancelled', 'AbortError');
+    const task = await getReverseEngineeringTask(taskId, organizationId, signal);
+    onUpdate?.(task);
+    if (terminal.has(task.status)) {
+      if (task.status === 'failed') throw new ApiError(task.result?.error || 'Repository analysis failed.');
+      return task;
+    }
+    await new Promise<void>((resolve, reject) => {
+      const timer = window.setTimeout(resolve, 1000);
+      signal?.addEventListener('abort', () => {
+        window.clearTimeout(timer);
+        reject(new DOMException('Polling cancelled', 'AbortError'));
+      }, { once: true });
+    });
+  }
+  throw new ApiError('Repository analysis is still running. Reopen this page to continue polling.');
 }
 
 export function uploadTechnicalDocs(files: File[], organizationId: string) {

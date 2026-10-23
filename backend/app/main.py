@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 import logging
 
-from app.api import repos, docs, business_docs, search, health_score, onboarding, kt_prep_questions, business_mapping
+from app.api import repos, docs, business_docs, search, health_score, onboarding, kt_prep_questions, business_mapping, reverse_engineering
 from app.db.neo4j_client import neo4j_client
 from app.db.chroma_client import chroma_client
 
@@ -43,6 +43,22 @@ async def lifespan(app: FastAPI):
             ensure_system_user(db)
     except Exception as exc:
         _main_logger.warning("Postgres system user seed warning: %s", exc)
+
+    # Reverse-engineering tasks use in-process background execution. Any old active
+    # task after a restart can no longer be running and must not remain misleadingly active.
+    try:
+        from pathlib import Path
+        from app.core.config import settings
+        from app.reverse_engineering.lifecycle import recover_stale_reverse_engineering_tasks
+        recovered = recover_stale_reverse_engineering_tasks(
+            Path(settings.REVERSE_ENGINEERING_WORK_ROOT),
+            stale_after_minutes=settings.REVERSE_ENGINEERING_STALE_TASK_MINUTES,
+            cleanup_checkouts=not settings.REVERSE_ENGINEERING_KEEP_CHECKOUTS,
+        )
+        if recovered:
+            _main_logger.warning("Marked %s stale reverse-engineering task(s) interrupted", recovered)
+    except Exception as exc:
+        _main_logger.warning("Reverse-engineering recovery warning: %s", exc)
 
     # Reranker: Preload model weights if configured
     try:
@@ -85,6 +101,7 @@ app.include_router(health_score.router)
 app.include_router(onboarding.router)
 app.include_router(kt_prep_questions.router)
 app.include_router(business_mapping.router)
+app.include_router(reverse_engineering.router)
 
 
 def custom_openapi():

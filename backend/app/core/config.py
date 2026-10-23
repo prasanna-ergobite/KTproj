@@ -31,6 +31,21 @@ class Settings(BaseSettings):
     EMBEDDING_PROVIDER: str = "nomic"  # "nomic" = nomic-ai/nomic-embed-text-v1.5 via sentence-transformers
     REPO_LOCAL_ALLOWED_ROOT: str = ""
 
+    # Source-only reverse-engineering demo
+    REVERSE_ENGINEERING_ALLOWED_GIT_HOSTS: str = "github.com,gitlab.com,bitbucket.org"
+    REVERSE_ENGINEERING_WORK_ROOT: str = "tmp_reverse_engineering"
+    REVERSE_ENGINEERING_ARTIFACT_ROOT: str = "artifacts/reverse_engineering"
+    REVERSE_ENGINEERING_MAX_FILES: int = 20_000
+    REVERSE_ENGINEERING_MAX_FILE_BYTES: int = 2 * 1024 * 1024
+    REVERSE_ENGINEERING_MAX_SOURCE_BYTES: int = 50 * 1024 * 1024
+    REVERSE_ENGINEERING_LLM_ENRICHMENT: bool = True
+    REVERSE_ENGINEERING_MAX_CORRECTION_ROUNDS: int = 2
+    REVERSE_ENGINEERING_MAX_BUNDLE_BYTES: int = 100 * 1024 * 1024
+    # In-process BackgroundTasks cannot survive a process restart, so the demo
+    # marks every previously active task interrupted at startup by default.
+    REVERSE_ENGINEERING_STALE_TASK_MINUTES: int = 0
+    REVERSE_ENGINEERING_KEEP_CHECKOUTS: bool = False
+
     # Cross-Encoder Reranking (Milestone 15 — final retrieval precision stage)
     # RERANKER_PROVIDER options:
     #   "cross-encoder" — loads ms-marco-MiniLM-L-6-v2 via sentence_transformers.CrossEncoder

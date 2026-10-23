@@ -13,8 +13,9 @@ import {
   getRepoHealth, ingestRepository, listRepositories, pollTask, searchKnowledge, startBusinessDocumentMapping,
   startKTQuestions, startOnboardingPack, uploadBusinessDocs, uploadTechnicalDocs,
 } from './api';
+import { ReverseEngineeringScreen } from './reverse-engineering/ReverseEngineeringScreen';
 
-type Screen = 'setup' | 'overview' | 'search' | 'module' | 'mapping';
+type Screen = 'setup' | 'overview' | 'search' | 'module' | 'mapping' | 'reverse';
 type ModuleTab = 'health' | 'onboarding' | 'questions';
 type IngestState = 'idle' | 'running' | 'complete';
 
@@ -44,6 +45,7 @@ const navItems: Array<{ id: Screen; label: string; icon: typeof Search }> = [
   { id: 'search', label: 'Knowledge search', icon: Search },
   { id: 'module', label: 'Module intelligence', icon: Boxes },
   { id: 'mapping', label: 'Business mapping', icon: Network },
+  { id: 'reverse', label: 'Reverse engineer', icon: FolderGit2 },
 ];
 
 interface MappingSectionView { id: string; title: string; status: string; count: number; confidence: number; chunk?: import('./api').BusinessMappingChunk }
@@ -236,6 +238,7 @@ function App() {
             />
           )}
           {screen === 'mapping' && <MappingScreen workspace={workspace} setWorkspace={setWorkspace} setToast={setToast} />}
+          {screen === 'reverse' && <ReverseEngineeringScreen defaultOrganizationId={workspace.organizationId} setToast={setToast} />}
         </main>
       </div>
       {toast && <div className="toast"><CheckCircle2 size={18} />{toast}</div>}

@@ -64,8 +64,11 @@ python -m venv venv
 source venv/bin/activate
 
 pip install -r requirements.txt
+alembic upgrade head
 uvicorn app.main:app --reload --port 8000
 ```
+
+Docker Compose applies pending PostgreSQL migrations automatically before the backend starts. For local backend development, run `alembic upgrade head` whenever migrations change or when using a new database.
 
 Run tests:
 ```bash

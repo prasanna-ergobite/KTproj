@@ -47,6 +47,8 @@ backend/tmp_repos/
 backend/tmp_docs/
 backend/tmp_business_docs/
 backend/tmp_chroma_real_repo/
+backend/tmp_reverse_engineering/
+backend/artifacts/reverse_engineering/
 
 # Developer scratch/debug scripts (not part of the product)
 backend/scratch/

@@ -209,5 +209,81 @@ def test_search_pagination_limit_offset(monkeypatch):
     assert p2_data["offset"] == 1
 
 
+# ---------------------------------------------------------------------------
+# Test 6: Answer Generation (RAG synthesis)
+# ---------------------------------------------------------------------------
+
+def test_search_answer_empty_context_returns_400():
+    """Test: POST /search/answer with empty context_items returns HTTP 400."""
+    res = client.post(
+        "/search/answer",
+        json={
+            "query": "How do we authenticate?",
+            "organization_id": TEST_ORG_ID,
+            "context_items": [],
+        },
+    )
+    assert res.status_code == 400
+    assert "empty" in res.json()["detail"].lower()
+
+
+def test_search_answer_successful_synthesis(monkeypatch):
+    """Test: POST /search/answer returns synthesized answer and cited sources."""
+    monkeypatch.setattr(settings, "LLM_PROVIDER", "stub")
+
+    mock_context_items = [
+        {
+            "chunk_id": "code:chunk:1",
+            "result_type": "code",
+            "text": "def authenticate(token: str): return verify_jwt(token)",
+            "rrf_score": 0.95,
+            "rerank_score": 0.98,
+            "metadata": {
+                "file_path": "auth/service.py",
+                "function_name": "authenticate",
+                "chunk_type": "function",
+            },
+            "graph_context": {
+                "module": {"id": "mod:auth", "name": "Authentication"},
+                "owners": [{"name": "Alice", "email": "alice@example.com", "commit_count": 10}],
+            },
+        },
+        {
+            "chunk_id": "doc:chunk:2",
+            "result_type": "doc",
+            "text": "# Auth Architecture\nTokens expire after 1 hour.",
+            "rrf_score": 0.85,
+            "rerank_score": 0.88,
+            "metadata": {
+                "file_path": "docs/auth.md",
+                "heading_path": "Auth Architecture",
+                "chunk_type": "markdown",
+            },
+        },
+    ]
+
+    res = client.post(
+        "/search/answer",
+        json={
+            "query": "How does authentication work?",
+            "organization_id": TEST_ORG_ID,
+            "context_items": mock_context_items,
+            "top_k": 2,
+        },
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["query"] == "How does authentication work?"
+    assert data["organization_id"] == TEST_ORG_ID
+    assert "answer" in data
+    assert len(data["answer"]) > 0
+    assert data["context_items_used"] == 2
+    assert len(data["sources"]) == 2
+    assert data["sources"][0]["chunk_id"] == "code:chunk:1"
+    assert data["sources"][0]["module_name"] == "Authentication"
+    assert "alice@example.com" in data["sources"][0]["owners"]
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-s"])
+
